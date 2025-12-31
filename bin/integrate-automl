@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+if [ ! -f "src/artisan" ]; then
+  echo "No Laravel app detected at ./src (missing src/artisan)."
+  echo "Run: bin/init"
+  exit 1
+fi
+
+stub_root=".stubs/automl"
+
+copy_stub() {
+  local rel="$1"
+  local src_file="$stub_root/$rel"
+  local dest_file="src/$rel"
+
+  mkdir -p "$(dirname "$dest_file")"
+  cp "$src_file" "$dest_file"
+}
+
+echo "Installing internal AutoML integration into ./src ..."
+
+copy_stub "config/automl.php"
+copy_stub "app/Services/Automl/AutomlClient.php"
+copy_stub "app/Services/Automl/AutomlWebhookNotifier.php"
+copy_stub "app/Jobs/TrainAutomlModel.php"
+
+# Add env hints to Laravel .env.example (idempotent)
+laravel_env_example="src/.env.example"
+if [ -f "$laravel_env_example" ]; then
+  if ! grep -q "AUTOML_BASE_URL" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# AutoML (internal)
+AUTOML_BASE_URL=http://ml:8000
+AUTOML_TIMEOUT_SECONDS=60
+ENV
+  fi
+
+  if ! grep -q "AUTOML_WEBHOOK_ENABLED" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# AutoML webhook (optional)
+AUTOML_WEBHOOK_ENABLED=true
+AUTOML_WEBHOOK_URL=https://3eeeffe7fbb2ec6eac086222fffec8.14.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d304bf81a8ff4e6f82812f4976b20cbc/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=apljVzAaFo2xQq4j_nAVOhItiLxLQkcGzVGPBJcPe18
+AUTOML_WEBHOOK_TIMEOUT_SECONDS=3600
+AUTOML_WEBHOOK_INCLUDE_ROWS=true
+ENV
+  fi
+fi
+
+# Optionally add to Laravel .env (do not overwrite existing values)
+laravel_env="src/.env"
+if [ -f "$laravel_env" ]; then
+  if ! grep -q "AUTOML_BASE_URL" "$laravel_env"; then
+    cat >> "$laravel_env" <<'ENV'
+
+# AutoML (internal)
+AUTOML_BASE_URL=http://ml:8000
+AUTOML_TIMEOUT_SECONDS=60
+ENV
+  fi
+
+  if ! grep -q "AUTOML_WEBHOOK_ENABLED" "$laravel_env"; then
+    cat >> "$laravel_env" <<'ENV'
+
+# AutoML webhook (optional)
+AUTOML_WEBHOOK_ENABLED=false
+AUTOML_WEBHOOK_URL=
+AUTOML_WEBHOOK_TIMEOUT_SECONDS=15
+AUTOML_WEBHOOK_INCLUDE_ROWS=false
+ENV
+  fi
+fi
+
+echo "Done."
+echo "Developer usage: inject App\\Services\\Automl\\AutomlClient and call ->train() / ->predict()."

@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Fix typical Laravel writable directories
+if [ -d "src/storage" ] && [ -d "src/bootstrap/cache" ]; then
+  docker compose exec app bash -lc "chown -R www-data:www-data storage bootstrap/cache && chmod -R ug+rw storage bootstrap/cache"
+  echo "Permissions updated."
+else
+  echo "No Laravel directories found yet (src/storage, src/bootstrap/cache). Run bin/init first."
+fi

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Run a one-off worker in the app container (use the dedicated worker service for long-running)
+docker compose run --rm \
+  -u "$(id -u):$(id -g)" \
+  app php artisan queue:work --verbose --tries=3 --timeout=120

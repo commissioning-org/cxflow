@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Ensure images are built and DB is up first (healthcheck)
+docker compose up -d --build db
+
+echo "Waiting for MySQL to be healthy..."
+docker compose up -d db
+
+# Create Laravel project into ./src if missing
+if [ ! -f "src/artisan" ]; then
+  echo "No Laravel app found in ./src — creating one via Composer in the app container..."
+  docker compose run --rm \
+    -u "$(id -u):$(id -g)" \
+    app \
+    composer create-project laravel/laravel .
+
+  echo "Laravel created. Generating app key..."
+  docker compose run --rm \
+    -u "$(id -u):$(id -g)" \
+    app \
+    php artisan key:generate
+
+  if [ -f "bin/integrate-grok3" ]; then
+    echo "Installing Grok-3 (GitHub Models) integration scaffolding..."
+    bash bin/integrate-grok3 || true
+  fi
+
+  if [ -f "bin/integrate-automl" ]; then
+    echo "Installing AutoML integration scaffolding..."
+    bash bin/integrate-automl || true
+  fi
+
+  echo "Setting recommended permissions for storage/ and bootstrap/cache..."
+  docker compose exec app bash -lc "chown -R www-data:www-data storage bootstrap/cache || true"
+else
+  echo "Laravel app already exists in ./src — skipping create-project."
+fi
+
+echo "Done. You can start the stack with: bin/up (or bin/dev)"

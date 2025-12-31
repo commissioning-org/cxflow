@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Run scheduler once (for cron-like behavior). For continuous, use the scheduler service.
+docker compose run --rm \
+  -u "$(id -u):$(id -g)" \
+  app php artisan schedule:run

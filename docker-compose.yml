@@ -1,0 +1,169 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+    container_name: laravel_app
+    ports:
+      - "${APP_PORT:-8080}:80"
+    volumes:
+      - ./src:/var/www/html
+      - composer_cache:/tmp/composer-cache
+    environment:
+      # Apache vhost is configured for Laravel's /public
+      APACHE_DOCUMENT_ROOT: /var/www/html/public
+      # Helpful defaults (Laravel will still use src/.env)
+      APP_ENV: local
+      APP_DEBUG: "true"
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+      # GitHub Models / Grok-3 integration (set these in your local .env; do not commit tokens)
+      GITHUB_MODELS_TOKEN: ${GITHUB_MODELS_TOKEN:-}
+      GITHUB_MODELS_MODEL: ${GITHUB_MODELS_MODEL:-grok-3}
+      GITHUB_MODELS_BASE_URL: ${GITHUB_MODELS_BASE_URL:-https://models.inference.ai.azure.com}
+
+      # Neutral env names (preferred)
+      ASSISTANT_API_KEY: ${ASSISTANT_API_KEY:-}
+      ASSISTANT_MODEL: ${ASSISTANT_MODEL:-grok-3}
+      ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-https://models.inference.ai.azure.com}
+      ASSISTANT_ALLOW_OTHER_MODELS: ${ASSISTANT_ALLOW_OTHER_MODELS:-false}
+      ASSISTANT_TIMEOUT_SECONDS: ${ASSISTANT_TIMEOUT_SECONDS:-60}
+
+      # Internal AutoML service
+      AUTOML_BASE_URL: ${AUTOML_BASE_URL:-http://ml:8000}
+      AUTOML_WEBHOOK_ENABLED: ${AUTOML_WEBHOOK_ENABLED:-false}
+      AUTOML_WEBHOOK_URL: ${AUTOML_WEBHOOK_URL:-}
+      AUTOML_WEBHOOK_TIMEOUT_SECONDS: ${AUTOML_WEBHOOK_TIMEOUT_SECONDS:-15}
+      AUTOML_WEBHOOK_INCLUDE_ROWS: ${AUTOML_WEBHOOK_INCLUDE_ROWS:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      mssql:
+        condition: service_started
+      redis:
+        condition: service_started
+      mail:
+        condition: service_started
+
+  # Internal AutoML microservice (FastAPI + scikit-learn)
+  ml:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: laravel_ml
+    environment:
+      ML_MODELS_DIR: /models
+    volumes:
+      - ml_models:/models
+    ports:
+      - "${ML_PORT:-8090}:8000"
+
+  db:
+    image: mysql:8.0
+    container_name: laravel_db
+    command: --default-authentication-plugin=mysql_native_password
+    ports:
+      - "${MYSQL_PORT:-3306}:3306"
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-laravel}
+      MYSQL_USER: ${MYSQL_USER:-laravel}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-secret}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-root}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD:-root}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    container_name: laravel_phpmyadmin
+    ports:
+      - "${PHPMYADMIN_PORT:-8081}:80"
+    environment:
+      PMA_HOST: db
+      PMA_PORT: 3306
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # Redis for Laravel cache/queue
+  redis:
+    image: redis:7-alpine
+    container_name: laravel_redis
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+  # Local mail testing (SMTP)
+  mail:
+    image: mailhog/mailhog:latest
+    container_name: laravel_mail
+    ports:
+      - "${MAILHOG_SMTP_PORT:-1025}:1025"
+      - "${MAILHOG_UI_PORT:-8025}:8025"
+
+  # Queue worker (separate container keeps web requests snappy)
+  worker:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+    container_name: laravel_worker
+    volumes:
+      - ./src:/var/www/html
+      - composer_cache:/tmp/composer-cache
+    environment:
+      COMPOSER_CACHE_DIR: /tmp/composer-cache
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: ["bash", "-lc", "php artisan queue:work --verbose --tries=3 --timeout=120"]
+
+  # Scheduler runner
+  scheduler:
+    build:
+      context: .
+      dockerfile: .docker/php/Dockerfile
+    container_name: laravel_scheduler
+    volumes:
+      - ./src:/var/www/html
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["bash", "-lc", "php artisan schedule:work"]
+
+  # Node for Vite / frontend tooling
+  node:
+    image: node:20-bookworm
+    container_name: laravel_node
+    working_dir: /workspace
+    volumes:
+      - ./src:/workspace
+      - node_modules:/workspace/node_modules
+      - npm_cache:/root/.npm
+    ports:
+      - "${VITE_PORT:-5173}:5173"
+    command: ["bash", "-lc", "npm install && npm run dev -- --host 0.0.0.0 --port 5173"]
+
+  # Optional SQL Server for Laravel's sqlsrv driver
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: laravel_mssql
+    ports:
+      - "${MSSQL_PORT:-1433}:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: ${MSSQL_PID:-Developer}
+      SA_PASSWORD: ${MSSQL_SA_PASSWORD:-YourStrong!Passw0rd}
+    volumes:
+      - mssql_data:/var/opt/mssql
+
+volumes:
+  db_data:
+  mssql_data:
+  composer_cache:
+  node_modules:
+  npm_cache:
+  ml_models:

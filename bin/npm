@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Run npm inside the Node service container
+# Example: bin/npm install
+# Example: bin/npm run build
+
+docker compose run --rm node npm "$@"

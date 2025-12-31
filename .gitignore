@@ -1,0 +1,18 @@
+.DS_Store
+
+# Local env files (keep secrets out of git)
+.env
+
+# Laravel app
+src/vendor/
+src/node_modules/
+src/.env
+src/.phpunit.result.cache
+src/storage/*.key
+src/storage/logs/
+
+# IDE
+.vscode/
+
+# Misc
+.env.local

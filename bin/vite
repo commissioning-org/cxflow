@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# Start the Node/Vite dev server service
+docker compose up -d node
+
+echo "Vite is starting. Open http://localhost:${VITE_PORT:-5173} (if your Laravel app uses Vite)."

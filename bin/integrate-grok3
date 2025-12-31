@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+if [ ! -f "src/artisan" ]; then
+  echo "No Laravel app detected at ./src (missing src/artisan)."
+  echo "Run: bin/init  (to create Laravel)"
+  exit 1
+fi
+
+stub_root=".stubs/grok3"
+
+copy_stub() {
+  local rel="$1"
+  local src_file="$stub_root/$rel"
+  local dest_file="src/$rel"
+
+  mkdir -p "$(dirname "$dest_file")"
+  cp "$src_file" "$dest_file"
+}
+
+echo "Installing internal Assistant integration into ./src ..."
+
+# Install a neutral-named config + service (no public routes are added).
+stub_root=".stubs/assistant"
+
+copy_stub "config/assistant.php"
+copy_stub "app/Services/Assistant/AssistantClient.php"
+copy_stub "app/Services/Assistant/AssistantService.php"
+copy_stub "app/Jobs/RunAssistantTask.php"
+copy_stub "app/Console/Commands/AssistantRun.php"
+
+# Add env hints to Laravel .env.example (idempotent)
+laravel_env_example="src/.env.example"
+if [ -f "$laravel_env_example" ] && ! grep -q "ASSISTANT_API_KEY" "$laravel_env_example"; then
+  cat >> "$laravel_env_example" <<'ENV'
+
+# Assistant (server-side)
+ASSISTANT_API_KEY=
+ASSISTANT_MODEL=grok-3
+ASSISTANT_BASE_URL=https://models.inference.ai.azure.com
+ASSISTANT_ALLOW_OTHER_MODELS=false
+ASSISTANT_TIMEOUT_SECONDS=60
+
+# Automation tuning
+ASSISTANT_SYSTEM="Be concise and accurate."
+ASSISTANT_CACHE_ENABLED=true
+ASSISTANT_CACHE_TTL_SECONDS=300
+ASSISTANT_RETRY_COUNT=2
+ASSISTANT_RETRY_BASE_DELAY_MS=250
+ASSISTANT_JSON_FIX_ATTEMPTS=2
+ENV
+fi
+
+# Optionally add to Laravel .env (do not overwrite existing values)
+laravel_env="src/.env"
+if [ -f "$laravel_env" ] && ! grep -q "ASSISTANT_API_KEY" "$laravel_env"; then
+  cat >> "$laravel_env" <<'ENV'
+
+# Assistant (do not commit real tokens)
+ASSISTANT_API_KEY=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
+ASSISTANT_MODEL=grok-3
+ASSISTANT_BASE_URL=https://models.inference.ai.azure.com
+ASSISTANT_ALLOW_OTHER_MODELS=false
+ASSISTANT_TIMEOUT_SECONDS=60
+
+# Automation tuning
+ASSISTANT_SYSTEM="Be concise and accurate."
+ASSISTANT_CACHE_ENABLED=true
+ASSISTANT_CACHE_TTL_SECONDS=300
+ASSISTANT_RETRY_COUNT=2
+ASSISTANT_RETRY_BASE_DELAY_MS=250
+ASSISTANT_JSON_FIX_ATTEMPTS=2
+ENV
+fi
+
+echo "Done."
+echo "Next: set ASSISTANT_API_KEY (Codespaces secret or src/.env)."
+echo "Use App\\Services\\Assistant\\AssistantClient from your existing features without mentioning providers in user-facing text."
