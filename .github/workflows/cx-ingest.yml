@@ -55,7 +55,11 @@ jobs:
             echo "Attempt $i/$attempts"
 
             set +e
-            out=$(CX_INGESTION_OUT_DIR="ingestion/runs" php ingestion/php_cx_request.php "$CX_INGESTION_URI")
+            if [ -f "ingestion/cx_orchestrate.php" ]; then
+              out=$(CX_INGESTION_OUT_DIR="ingestion/runs" php ingestion/cx_orchestrate.php "$CX_INGESTION_URI")
+            else
+              out=$(CX_INGESTION_OUT_DIR="ingestion/runs" php ingestion/php_cx_request.php "$CX_INGESTION_URI")
+            fi
             rc=$?
             set -e
 
@@ -109,12 +113,17 @@ print(f"http_code={d.get(\"response\",{}).get(\"http_code\",\"\")}")
             ingestion/last_run_output.redacted.json
             ingestion/last_run_output.json
             ${{ steps.ingest.outputs.run_dir }}/manifest.json
+            ${{ steps.ingest.outputs.run_dir }}/event.json
             ${{ steps.ingest.outputs.run_dir }}/response.headers.txt
+            ${{ steps.ingest.outputs.run_dir }}/response.headers.json
             ${{ steps.ingest.outputs.run_dir }}/response.body
+            ${{ steps.ingest.outputs.run_dir }}/response.decoded.body
             ${{ steps.ingest.outputs.run_dir }}/response.json
             ${{ steps.ingest.outputs.run_dir }}/rows.ndjson
             ${{ steps.ingest.outputs.run_dir }}/rows.csv
             ${{ steps.ingest.outputs.run_dir }}/files
+            ${{ steps.ingest.outputs.run_dir }}/webhook.result.json
+            ${{ steps.ingest.outputs.run_dir }}/route.*.result.json
           if-no-files-found: ignore
           retention-days: 14
 

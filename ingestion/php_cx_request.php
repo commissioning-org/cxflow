@@ -29,19 +29,52 @@ declare(strict_types=1);
  */
 function cx_parse_args(array $argv): array
 {
-    $url = $argv[1] ?? '';
-    $url = trim((string) $url);
+    $help = in_array('-h', $argv, true) || in_array('--help', $argv, true);
+    if ($help) {
+        fwrite(STDOUT, "Usage: php ingestion/php_cx_request.php <url>\n\n");
+        fwrite(STDOUT, "Environment options:\n");
+        fwrite(STDOUT, "  CX_INGESTION_OUT_DIR                Output base directory (default: ingestion/runs)\n");
+        fwrite(STDOUT, "  CX_INGESTION_TIMEOUT_SECONDS        Total request timeout (default: 30)\n");
+        fwrite(STDOUT, "  CX_INGESTION_CONNECT_TIMEOUT_SECONDS Connect timeout (default: 10)\n");
+        fwrite(STDOUT, "  CX_INGESTION_MAX_BODY_BYTES         Cap stored body bytes (0 = unlimited; default: 0)\n");
+        fwrite(STDOUT, "  CX_INGESTION_MAX_PARSE_BYTES        Cap parsed bytes for JSON/CSV/NDJSON (default: 25000000)\n");
+        fwrite(STDOUT, "  CX_INGESTION_PARSE_ON_FAILURE       Parse body even for non-2xx (default: true)\n");
+        fwrite(STDOUT, "  CX_INGESTION_DECODE_GZIP            If response is gzip, decode for parsing (default: true)\n");
+        fwrite(STDOUT, "  CX_INGESTION_MAX_ROWS               Max rows to extract/write (default: 5000)\n");
+        fwrite(STDOUT, "  CX_INGESTION_HEADERS_JSON           Extra request headers as JSON object (values are NOT logged)\n");
+        fwrite(STDOUT, "\n");
+        exit(0);
+    }
+
+    $url = trim((string) ($argv[1] ?? ''));
 
     // Defaults
     $outDir = (string) (getenv('CX_INGESTION_OUT_DIR') ?: (dirname(__FILE__) . '/runs'));
     $decodeFiles = (string) (getenv('CX_INGESTION_DECODE_FILES') ?: 'true');
     $maxDecodeBytes = (int) (getenv('CX_INGESTION_MAX_DECODE_BYTES') ?: 20_000_000); // 20MB
 
+    $timeoutSeconds = (int) (getenv('CX_INGESTION_TIMEOUT_SECONDS') ?: 30);
+    $connectTimeoutSeconds = (int) (getenv('CX_INGESTION_CONNECT_TIMEOUT_SECONDS') ?: 10);
+    $maxBodyBytes = (int) (getenv('CX_INGESTION_MAX_BODY_BYTES') ?: 0);
+    $maxParseBytes = (int) (getenv('CX_INGESTION_MAX_PARSE_BYTES') ?: 25_000_000); // 25MB
+    $parseOnFailure = (string) (getenv('CX_INGESTION_PARSE_ON_FAILURE') ?: 'true');
+    $decodeGzip = (string) (getenv('CX_INGESTION_DECODE_GZIP') ?: 'true');
+    $maxRows = (int) (getenv('CX_INGESTION_MAX_ROWS') ?: 5000);
+    $headersJson = (string) (getenv('CX_INGESTION_HEADERS_JSON') ?: '');
+
     return [
         'url' => $url,
         'out_dir' => $outDir,
         'decode_files' => in_array(strtolower($decodeFiles), ['1', 'true', 'yes', 'on'], true),
         'max_decode_bytes' => max(0, $maxDecodeBytes),
+        'timeout_seconds' => max(1, $timeoutSeconds),
+        'connect_timeout_seconds' => max(1, $connectTimeoutSeconds),
+        'max_body_bytes' => max(0, $maxBodyBytes),
+        'max_parse_bytes' => max(0, $maxParseBytes),
+        'parse_on_failure' => in_array(strtolower($parseOnFailure), ['1', 'true', 'yes', 'on'], true),
+        'decode_gzip' => in_array(strtolower($decodeGzip), ['1', 'true', 'yes', 'on'], true),
+        'max_rows' => max(0, $maxRows),
+        'headers_json' => $headersJson,
     ];
 }
 
@@ -70,20 +103,94 @@ function cx_write_json(string $path, array $data): void
 }
 
 /**
- * Attempt to interpret a decoded JSON payload as rows.
+ * @return array<string, mixed>
+ */
+function cx_parse_headers_lines(array $lines): array
+{
+    $statusLine = null;
+    /** @var array<string, array<int, string>> $headers */
+    $headers = [];
+
+    foreach ($lines as $line) {
+        $line = trim((string) $line);
+        if ($line === '') {
+            continue;
+        }
+
+        if (str_starts_with($line, 'HTTP/')) {
+            $statusLine = $line;
+            continue;
+        }
+
+        $pos = strpos($line, ':');
+        if ($pos === false) {
+            continue;
+        }
+
+        $name = strtolower(trim(substr($line, 0, $pos)));
+        $value = trim(substr($line, $pos + 1));
+        if ($name === '') {
+            continue;
+        }
+        $headers[$name] ??= [];
+        $headers[$name][] = $value;
+    }
+
+    return [
+        'status_line' => $statusLine,
+        'headers' => $headers,
+    ];
+}
+
+function cx_content_type_base(string $contentType): string
+{
+    $contentType = trim($contentType);
+    if ($contentType === '') {
+        return '';
+    }
+    $semi = strpos($contentType, ';');
+    if ($semi === false) {
+        return strtolower($contentType);
+    }
+    return strtolower(trim(substr($contentType, 0, $semi)));
+}
+
+function cx_is_gzip_bytes(string $bytes): bool
+{
+    // gzip magic: 1f 8b
+    return strlen($bytes) >= 2 && ord($bytes[0]) === 0x1f && ord($bytes[1]) === 0x8b;
+}
+
+function cx_hash_file_sha256(?string $path): ?string
+{
+    if (!is_string($path) || $path === '' || !is_file($path)) {
+        return null;
+    }
+    $h = hash_file('sha256', $path);
+    return is_string($h) ? $h : null;
+}
+
+/**
+ * Attempt to parse rows from common JSON shapes.
  *
  * @param mixed $json
+ * @param int $maxRows
  * @return array<int, array<string, mixed>>
  */
-function cx_extract_rows(mixed $json): array
+function cx_extract_rows(mixed $json, int $maxRows = 0): array
 {
     $rows = [];
 
     if (is_array($json)) {
-        // either [ {..}, {..} ] or { rows: [...] }
-        if (array_key_exists('rows', $json) && is_array($json['rows'] ?? null)) {
-            $rows = $json['rows'];
-        } else {
+        // Common wrappers:
+        foreach (['rows', 'data', 'items', 'value', 'results'] as $k) {
+            if (array_key_exists($k, $json) && is_array($json[$k] ?? null)) {
+                $rows = $json[$k];
+                break;
+            }
+        }
+        if ($rows === []) {
+            // either [ {..}, {..} ]
             $rows = $json;
         }
     }
@@ -94,9 +201,94 @@ function cx_extract_rows(mixed $json): array
             /** @var array<string, mixed> $r */
             $out[] = $r;
         }
+        if ($maxRows > 0 && count($out) >= $maxRows) {
+            break;
+        }
     }
 
     return $out;
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function cx_parse_ndjson_rows(string $path, int $maxRows = 0): array
+{
+    $fh = fopen($path, 'rb');
+    if ($fh === false) {
+        return [];
+    }
+
+    $rows = [];
+    try {
+        while (!feof($fh)) {
+            $line = fgets($fh);
+            if ($line === false) {
+                break;
+            }
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            /** @var mixed $json */
+            $json = json_decode($line, true);
+            if (is_array($json)) {
+                /** @var array<string, mixed> $json */
+                $rows[] = $json;
+            }
+            if ($maxRows > 0 && count($rows) >= $maxRows) {
+                break;
+            }
+        }
+    } finally {
+        fclose($fh);
+    }
+
+    return $rows;
+}
+
+/**
+ * @return array<int, array<string, mixed>>
+ */
+function cx_parse_csv_rows(string $path, int $maxRows = 0): array
+{
+    $fh = fopen($path, 'rb');
+    if ($fh === false) {
+        return [];
+    }
+
+    try {
+        $headers = fgetcsv($fh);
+        if (!is_array($headers)) {
+            return [];
+        }
+        $headers = array_map(fn ($h) => is_string($h) ? trim($h) : '', $headers);
+
+        $rows = [];
+        while (($line = fgetcsv($fh)) !== false) {
+            if (!is_array($line)) {
+                continue;
+            }
+
+            $row = [];
+            foreach ($headers as $i => $h) {
+                if ($h === '') {
+                    continue;
+                }
+                $row[$h] = $line[$i] ?? null;
+            }
+
+            /** @var array<string, mixed> $row */
+            $rows[] = $row;
+            if ($maxRows > 0 && count($rows) >= $maxRows) {
+                break;
+            }
+        }
+
+        return $rows;
+    } finally {
+        fclose($fh);
+    }
 }
 
 /**
@@ -224,6 +416,8 @@ $filesDir = cx_mkdir_p($runDir . '/files');
 $bodyPath = $runDir . '/response.body';
 $headersPath = $runDir . '/response.headers.txt';
 $metaPath = $runDir . '/manifest.json';
+$headersJsonPath = $runDir . '/response.headers.json';
+$decodedBodyPath = null;
 
 $ch = curl_init($url);
 if ($ch === false) {
@@ -234,7 +428,28 @@ if ($ch === false) {
 $headers = [
     'request_type: php_cx_request',
     'Accept: application/json',
+    'User-Agent: cxflow-ingestion/1.0',
 ];
+
+// Allow extra headers via env JSON (values are treated as secrets and are NOT written to manifest).
+$customHeadersRaw = trim((string) ($args['headers_json'] ?? ''));
+$customHeaderNames = [];
+if ($customHeadersRaw !== '') {
+    /** @var mixed $decoded */
+    $decoded = json_decode($customHeadersRaw, true);
+    if (is_array($decoded)) {
+        foreach ($decoded as $k => $v) {
+            if (!is_string($k) || $k === '') {
+                continue;
+            }
+            if (!is_string($v)) {
+                continue;
+            }
+            $headers[] = $k . ': ' . $v;
+            $customHeaderNames[] = $k;
+        }
+    }
+}
 
 $headerLines = [];
 $fh = fopen($bodyPath, 'wb');
@@ -247,8 +462,8 @@ curl_setopt_array($ch, [
     CURLOPT_RETURNTRANSFER => false,
     CURLOPT_FOLLOWLOCATION => true,
     CURLOPT_MAXREDIRS => 3,
-    CURLOPT_CONNECTTIMEOUT => 10,
-    CURLOPT_TIMEOUT => 30,
+    CURLOPT_CONNECTTIMEOUT => (int) ($args['connect_timeout_seconds'] ?? 10),
+    CURLOPT_TIMEOUT => (int) ($args['timeout_seconds'] ?? 30),
     CURLOPT_HTTPHEADER => $headers,
     CURLOPT_FILE => $fh,
     CURLOPT_HEADERFUNCTION => static function ($ch, string $header) use (&$headerLines): int {
@@ -303,10 +518,24 @@ if ($ok === false) {
 
 $httpCode = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
 $contentType = (string) (curl_getinfo($ch, CURLINFO_CONTENT_TYPE) ?: '');
+$timings = [
+    'total_time' => (float) curl_getinfo($ch, CURLINFO_TOTAL_TIME),
+    'namelookup_time' => (float) curl_getinfo($ch, CURLINFO_NAMELOOKUP_TIME),
+    'connect_time' => (float) curl_getinfo($ch, CURLINFO_CONNECT_TIME),
+    'appconnect_time' => (float) curl_getinfo($ch, CURLINFO_APPCONNECT_TIME),
+    'pretransfer_time' => (float) curl_getinfo($ch, CURLINFO_PRETRANSFER_TIME),
+    'starttransfer_time' => (float) curl_getinfo($ch, CURLINFO_STARTTRANSFER_TIME),
+    'redirect_time' => (float) curl_getinfo($ch, CURLINFO_REDIRECT_TIME),
+    'redirect_count' => (int) curl_getinfo($ch, CURLINFO_REDIRECT_COUNT),
+    'size_download' => (float) curl_getinfo($ch, CURLINFO_SIZE_DOWNLOAD),
+];
 curl_close($ch);
 
 $rawHeaders = implode("\n", $headerLines) . "\n";
 file_put_contents($headersPath, $rawHeaders);
+
+$parsedHeaders = cx_parse_headers_lines($headerLines);
+cx_write_json($headersJsonPath, $parsedHeaders);
 
 $bodySize = is_file($bodyPath) ? (int) filesize($bodyPath) : 0;
 
@@ -318,28 +547,65 @@ $rowsCsvPath = null;
 $fileArtifacts = [];
 $rowStats = null;
 
-// On success, aggressively process the response into useful artifacts.
-if ($isSuccess) {
+$parseEnabled = $isSuccess || (bool) ($args['parse_on_failure'] ?? true);
+
+// On success (or when enabled), aggressively process the response into useful artifacts.
+if ($parseEnabled) {
     $sniff = '';
     $fh2 = fopen($bodyPath, 'rb');
     if ($fh2 !== false) {
-        $sniff = (string) fread($fh2, 2048);
+        $sniff = (string) fread($fh2, 4096);
         fclose($fh2);
     }
     $sniffTrim = ltrim($sniff);
 
-    $looksJson = str_contains(strtolower($contentType), 'json') || str_starts_with($sniffTrim, '{') || str_starts_with($sniffTrim, '[');
+    $baseType = cx_content_type_base($contentType);
+    $looksJson = str_contains($baseType, 'json') || str_starts_with($sniffTrim, '{') || str_starts_with($sniffTrim, '[');
+    $looksNdjson = str_contains($baseType, 'ndjson') || str_contains($baseType, 'jsonl');
+    $looksCsv = str_contains($baseType, 'csv') || str_contains($baseType, 'text/csv');
+
+    // If response is gzip, optionally decode for parsing (keeps raw body always).
+    $parsePath = $bodyPath;
+    $contentEncoding = '';
+    /** @var array<string, array<int, string>> $hdrMap */
+    $hdrMap = is_array($parsedHeaders['headers'] ?? null) ? $parsedHeaders['headers'] : [];
+    if (isset($hdrMap['content-encoding'][0])) {
+        $contentEncoding = strtolower((string) $hdrMap['content-encoding'][0]);
+    }
+
+    $sniffIsGz = cx_is_gzip_bytes($sniff);
+    $encodingSaysGz = str_contains($contentEncoding, 'gzip');
+    if ((bool) ($args['decode_gzip'] ?? true) && ($sniffIsGz || $encodingSaysGz) && $bodySize > 0) {
+        // Decode only when body is within max_parse_bytes to avoid accidental huge decompression.
+        $maxParse = (int) ($args['max_parse_bytes'] ?? 25_000_000);
+        if ($maxParse <= 0 || $bodySize <= $maxParse) {
+            $rawBody = (string) file_get_contents($bodyPath);
+            $decodedBody = function_exists('gzdecode') ? @gzdecode($rawBody) : false;
+            if (is_string($decodedBody) && $decodedBody !== '') {
+                $decodedBodyPath = $runDir . '/response.decoded.body';
+                file_put_contents($decodedBodyPath, $decodedBody);
+                $parsePath = $decodedBodyPath;
+            }
+        }
+    }
+
+    $maxParseBytes = (int) ($args['max_parse_bytes'] ?? 25_000_000);
+    $maxRows = (int) ($args['max_rows'] ?? 5000);
 
     // Keep parsing bounded. (Still saves raw body regardless.)
-    if ($looksJson && $bodySize > 0 && $bodySize <= 25_000_000) { // 25MB
-        $rawBody = (string) file_get_contents($bodyPath);
+    $parseSize = is_file($parsePath) ? (int) filesize($parsePath) : 0;
+    $withinParseLimit = $parseSize > 0 && ($maxParseBytes <= 0 || $parseSize <= $maxParseBytes);
+
+    // Try JSON first.
+    if (($looksJson || $looksNdjson) && $withinParseLimit) {
+        $rawBody = (string) file_get_contents($parsePath);
         $decoded = json_decode($rawBody, true);
         if (is_array($decoded)) {
             $parsedJson = $decoded;
             $parsedJsonPath = $runDir . '/response.json';
             file_put_contents($parsedJsonPath, json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
 
-            $rows = cx_extract_rows($decoded);
+            $rows = cx_extract_rows($decoded, $maxRows);
             if (count($rows) > 0) {
                 $rowStats = cx_rows_stats($rows);
 
@@ -353,7 +619,7 @@ if ($isSuccess) {
                     fclose($nd);
                 }
 
-                // Optional CSV (best-effort): only write if values are scalars/null.
+                // Optional CSV (best-effort)
                 $rowsCsvPath = $runDir . '/rows.csv';
                 $csv = fopen($rowsCsvPath, 'wb');
                 if ($csv !== false) {
@@ -375,23 +641,45 @@ if ($isSuccess) {
             }
 
             // Extract embedded file payloads if requested.
-            if ($args['decode_files']) {
+            if ((bool) ($args['decode_files'] ?? true)) {
                 $embedded = cx_find_embedded_files($decoded);
                 $totalDecoded = 0;
                 $i = 0;
                 foreach ($embedded as $e) {
-                    if ($args['max_decode_bytes'] > 0 && $totalDecoded >= $args['max_decode_bytes']) {
-                        break;
+                    $remaining = (int) ($args['max_decode_bytes'] ?? 0);
+                    if ($remaining > 0) {
+                        $remaining = $remaining - $totalDecoded;
+                        if ($remaining <= 0) {
+                            break;
+                        }
                     }
 
                     $b64 = (string) ($e['content_bytes'] ?? '');
+                    $b64 = trim($b64);
+                    if ($b64 === '') {
+                        continue;
+                    }
+
+                    // Rough pre-check to avoid decoding enormous payloads.
+                    if ($remaining > 0) {
+                        $pred = (int) floor(strlen($b64) * 0.75);
+                        if ($pred > $remaining) {
+                            continue;
+                        }
+                    }
+
+                    // Support data URLs.
+                    if (str_starts_with($b64, 'data:') && str_contains($b64, ';base64,')) {
+                        $b64 = (string) substr($b64, strpos($b64, ';base64,') + 8);
+                    }
+
                     $bin = base64_decode($b64, true);
                     if ($bin === false) {
                         continue;
                     }
 
                     $len = strlen($bin);
-                    if ($args['max_decode_bytes'] > 0 && ($totalDecoded + $len) > $args['max_decode_bytes']) {
+                    if ((int) ($args['max_decode_bytes'] ?? 0) > 0 && ($totalDecoded + $len) > (int) ($args['max_decode_bytes'] ?? 0)) {
                         continue;
                     }
 
@@ -404,12 +692,50 @@ if ($isSuccess) {
                         'path' => (string) ($e['path'] ?? '$'),
                         'filename' => $safe,
                         'bytes' => $len,
+                        'sha256' => cx_hash_file_sha256($out),
                         'content_type' => $e['content_type'] ?? null,
                         'saved_to' => $out,
                     ];
                     $totalDecoded += $len;
                     $i++;
                 }
+            }
+        }
+    }
+
+    // If JSON parsing didn't produce rows, try NDJSON.
+    if ($rowsPath === null && ($looksNdjson || str_ends_with(strtolower($parsePath), '.ndjson')) && $withinParseLimit) {
+        $rows = cx_parse_ndjson_rows($parsePath, $maxRows);
+        if (count($rows) > 0) {
+            $rowStats = cx_rows_stats($rows);
+            $rowsPath = $runDir . '/rows.ndjson';
+            $nd = fopen($rowsPath, 'wb');
+            if ($nd !== false) {
+                foreach ($rows as $r) {
+                    fwrite($nd, json_encode($r, JSON_UNESCAPED_SLASHES) . "\n");
+                }
+                fclose($nd);
+            }
+        }
+    }
+
+    // If still no rows, try CSV.
+    if ($rowsPath === null && ($looksCsv || str_ends_with(strtolower($parsePath), '.csv')) && $withinParseLimit) {
+        $rows = cx_parse_csv_rows($parsePath, $maxRows);
+        if (count($rows) > 0) {
+            $rowStats = cx_rows_stats($rows);
+            $rowsPath = $runDir . '/rows.ndjson';
+            $nd = fopen($rowsPath, 'wb');
+            if ($nd !== false) {
+                foreach ($rows as $r) {
+                    fwrite($nd, json_encode($r, JSON_UNESCAPED_SLASHES) . "\n");
+                }
+                fclose($nd);
+            }
+            $rowsCsvPath = $runDir . '/rows.csv';
+            // Keep original CSV copy for convenience.
+            if ($parsePath !== $rowsCsvPath) {
+                @copy($parsePath, $rowsCsvPath);
             }
         }
     }
@@ -424,11 +750,13 @@ if ($bodySize > 0) {
 $manifest = [
     'ok' => $isSuccess,
     'run_id' => $runId,
+    'started_at' => gmdate('c'),
     'request' => [
         'method' => 'GET',
         'url_redacted' => $redactedUrl,
         'headers' => [
             'request_type' => 'php_cx_request',
+            'custom_header_names' => $customHeaderNames,
         ],
     ],
     'response' => [
@@ -436,6 +764,8 @@ $manifest = [
         'content_type' => $contentType,
         'body_bytes' => $bodySize,
         'body_snippet' => $bodySnippet,
+        'headers_parsed' => $parsedHeaders,
+        'timings' => $timings,
     ],
     'processing' => [
         'parsed_json' => $parsedJson !== null,
@@ -443,9 +773,18 @@ $manifest = [
         'row_stats' => $rowStats,
         'decoded_files' => $fileArtifacts,
     ],
+    'checksums' => [
+        'response_body_sha256' => cx_hash_file_sha256($bodyPath),
+        'response_json_sha256' => cx_hash_file_sha256($parsedJsonPath),
+        'rows_ndjson_sha256' => cx_hash_file_sha256($rowsPath),
+        'rows_csv_sha256' => cx_hash_file_sha256($rowsCsvPath),
+        'response_headers_sha256' => cx_hash_file_sha256($headersPath),
+        'response_headers_json_sha256' => cx_hash_file_sha256($headersJsonPath),
+    ],
     'artifacts' => [
         'run_dir' => $runDir,
         'response_headers' => $headersPath,
+        'response_headers_json' => $headersJsonPath,
         'response_body' => $bodyPath,
         'response_json' => $parsedJsonPath,
         'rows_ndjson' => $rowsPath,

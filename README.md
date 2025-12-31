@@ -129,6 +129,24 @@ By default `bin/test` only runs `bin/lint`. To run a lightweight end-to-end smok
 
 - `SMOKE_DOCKER=1 bin/test`
 
+## CX ingestion orchestration + routing
+
+The scheduled workflow runs ingestion and stores artifacts under `ingestion/runs/<run_id>/`.
+
+If `ingestion/cx_orchestrate.php` is present, the workflow uses it to additionally generate:
+
+- `event.json` (clean event envelope)
+- optional `webhook.result.json`
+- optional `route.*.result.json` (fan-out routing results)
+
+To enable downstream routing (fan-out) from `cx_orchestrate.php`:
+
+- `CX_ORCH_ROUTE_ENABLED=true`
+- `CX_ORCH_TARGETS_JSON` = JSON array of targets, e.g.:
+	- each target can set `name`, `url`, `timeout_seconds`, `headers` (secret), `include_manifest`, `include_rows`, `max_rows`, `max_ndjson_bytes`
+
+Keep URLs/headers in GitHub Secrets or local `.env`; do not commit them.
+
 ## AutoML service (internal)
 
 This repo includes an internal Python service in `./ml` that can:
