@@ -57,11 +57,20 @@ ML_AUTOMATION_MAX_ROWS=5000
 ML_AUTOMATION_INCLUDE_ROWS=false
 
 # ML automation webhook (optional)
-ML_AUTOMATION_WEBHOOK_ENABLED=true
-ML_AUTOMATION_WEBHOOK_URL=https://3eeeffe7fbb2ec6eac086222fffec8.14.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/3d2dbeba15b5425b8551f67e61084464/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=zcOVZS6oRhfwU-R6rTxxk8EW32faD-S-bcar0DiFfno
+ML_AUTOMATION_WEBHOOK_ENABLED=false
+ML_AUTOMATION_WEBHOOK_URL=
 ML_AUTOMATION_WEBHOOK_TIMEOUT_SECONDS=15
 ML_AUTOMATION_WEBHOOK_INCLUDE_ROWS=false
 ML_AUTOMATION_WEBHOOK_SAMPLE_ROWS=50
+
+# Webhook payload modes
+# - multiple: stage-by-stage events (ml.ingest.completed, ml.train.completed, ...)
+# - single: send a single normalized event name with the original event nested
+# - both: send both styles
+ML_AUTOMATION_WEBHOOK_MODE=both
+ML_AUTOMATION_WEBHOOK_SINGLE_EVENT=ml.data
+ML_AUTOMATION_WEBHOOK_SINGLE_SUMMARY=true
+ML_AUTOMATION_WEBHOOK_FULL_PAYLOAD=true
 
 # Optional internal analysis helpers
 ML_AUTOMATION_ASSISTANT_ENABLED=true
@@ -89,6 +98,12 @@ ML_AUTOMATION_WEBHOOK_URL=
 ML_AUTOMATION_WEBHOOK_TIMEOUT_SECONDS=15
 ML_AUTOMATION_WEBHOOK_INCLUDE_ROWS=false
 ML_AUTOMATION_WEBHOOK_SAMPLE_ROWS=50
+
+# Webhook payload modes
+ML_AUTOMATION_WEBHOOK_MODE=both
+ML_AUTOMATION_WEBHOOK_SINGLE_EVENT=ml.data
+ML_AUTOMATION_WEBHOOK_SINGLE_SUMMARY=true
+ML_AUTOMATION_WEBHOOK_FULL_PAYLOAD=true
 
 # Optional internal analysis helpers
 ML_AUTOMATION_ASSISTANT_ENABLED=true

@@ -33,11 +33,12 @@ final class AutomlWebhookNotifier
             return;
         }
 
+        $mode = (string) (($cfg['mode'] ?? 'multiple') ?: 'multiple');
+        $singleEvent = (string) (($cfg['single_event'] ?? 'ml.data') ?: 'ml.data');
+
         try {
-            Http::timeout($timeout)
-                ->acceptJson()
-                ->asJson()
-                ->post($url, [
+            if ($mode === 'multiple' || $mode === 'both') {
+                $this->post($url, $timeout, [
                     'event' => $event,
                     'event_version' => 1,
                     'timestamp' => now()->toIso8601String(),
@@ -46,8 +47,24 @@ final class AutomlWebhookNotifier
                         'env' => (string) config('app.env'),
                     ],
                     'data' => $payload,
-                ])
-                ->throw();
+                ]);
+            }
+
+            if ($mode === 'single' || $mode === 'both') {
+                $this->post($url, $timeout, [
+                    'event' => $singleEvent,
+                    'event_version' => 1,
+                    'timestamp' => now()->toIso8601String(),
+                    'app' => [
+                        'name' => (string) config('app.name'),
+                        'env' => (string) config('app.env'),
+                    ],
+                    'data' => [
+                        'type' => $event,
+                        'payload' => $payload,
+                    ],
+                ]);
+            }
         } catch (\Throwable $e) {
             // Never break app logic because an external webhook is down.
             Log::warning('automl.webhook_failed', [
@@ -55,5 +72,17 @@ final class AutomlWebhookNotifier
                 'message' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function post(string $url, int $timeout, array $body): void
+    {
+        Http::timeout($timeout)
+            ->acceptJson()
+            ->asJson()
+            ->post($url, $body)
+            ->throw();
     }
 }

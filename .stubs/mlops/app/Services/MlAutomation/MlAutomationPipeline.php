@@ -34,6 +34,8 @@ final class MlAutomationPipeline
             return ['ok' => false, 'error' => 'disabled'];
         }
 
+        $runEvents = [];
+
         /** @var array<string, mixed> $pipelines */
         $pipelines = (array) config('ml_automation.pipelines', []);
         /** @var array<string, mixed> $cfg */
@@ -43,7 +45,7 @@ final class MlAutomationPipeline
         $runId = (string) Str::uuid();
         $startedAt = now()->toIso8601String();
 
-        $this->webhook->notify('ml.run.started', [
+        $this->emit($runEvents, 'ml.run.started', [
             'run_id' => $runId,
             'pipeline' => $pipeline,
             'started_at' => $startedAt,
@@ -54,11 +56,21 @@ final class MlAutomationPipeline
 
         $rows = $this->loader->loadRows($source, $format);
         if (count($rows) < 5) {
-            $this->webhook->notify('ml.ingest.failed', [
+            $this->emit($runEvents, 'ml.ingest.failed', [
                 'run_id' => $runId,
                 'pipeline' => $pipeline,
                 'source' => $source,
                 'row_count' => count($rows),
+            ]);
+
+            $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, [
+                'ok' => false,
+                'error' => 'insufficient_rows',
+                'run_id' => $runId,
+                'pipeline' => $pipeline,
+                'started_at' => $startedAt,
+                'finished_at' => now()->toIso8601String(),
+                'events' => $runEvents,
             ]);
             return ['ok' => false, 'error' => 'insufficient_rows'];
         }
@@ -76,7 +88,7 @@ final class MlAutomationPipeline
         $problem = $cfg['problem'] ?? null;
         $metric = $cfg['metric'] ?? null;
 
-        $this->webhook->notify('ml.ingest.completed', [
+        $this->emit($runEvents, 'ml.ingest.completed', [
             'run_id' => $runId,
             'pipeline' => $pipeline,
             'row_count' => count($rows),
@@ -88,12 +100,39 @@ final class MlAutomationPipeline
         ]);
 
         // Train via AutoML microservice
-        $trainResult = $this->automl->train(
-            rows: $rows,
-            target: $target,
-            problem: is_string($problem) ? $problem : null,
-            metric: is_string($metric) ? $metric : null,
-        );
+        try {
+            $trainResult = $this->automl->train(
+                rows: $rows,
+                target: $target,
+                problem: is_string($problem) ? $problem : null,
+                metric: is_string($metric) ? $metric : null,
+            );
+        } catch (\Throwable $e) {
+            $this->emit($runEvents, 'ml.train.failed', [
+                'run_id' => $runId,
+                'pipeline' => $pipeline,
+                'request' => [
+                    'target' => $target,
+                    'problem' => $problem,
+                    'metric' => $metric,
+                    'row_count' => count($rows),
+                    'row_sample' => $rowSample,
+                    ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
+                ],
+                'error' => 'training_failed',
+            ]);
+
+            $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, [
+                'ok' => false,
+                'error' => 'training_failed',
+                'run_id' => $runId,
+                'pipeline' => $pipeline,
+                'started_at' => $startedAt,
+                'finished_at' => now()->toIso8601String(),
+                'events' => $runEvents,
+            ]);
+            throw $e;
+        }
 
         $modelCard = null;
         $assistantEnabled = (bool) (($cfg['assistant']['enabled'] ?? true) && config('ml_automation.pipelines.' . $pipeline . '.assistant.enabled', true));
@@ -123,7 +162,7 @@ final class MlAutomationPipeline
 
         $this->storeArtifact($runId, $artifact);
 
-        $this->webhook->notify('ml.train.completed', [
+        $this->emit($runEvents, 'ml.train.completed', [
             'run_id' => $runId,
             'pipeline' => $pipeline,
             'request' => [
@@ -138,13 +177,51 @@ final class MlAutomationPipeline
             'model_card' => $modelCard,
         ]);
 
-        $this->webhook->notify('ml.run.completed', [
+        $this->emit($runEvents, 'ml.run.completed', [
             'run_id' => $runId,
             'pipeline' => $pipeline,
             'model_id' => (string) ($trainResult['model_id'] ?? ''),
         ]);
 
+        $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, $artifact + [
+            'events' => $runEvents,
+        ]);
+
         return $artifact;
+    }
+
+    /**
+     * @param array<int, array{event:string, timestamp:string, data:array<string,mixed>}> $runEvents
+     * @param array<string, mixed> $payload
+     */
+    private function emit(array &$runEvents, string $event, array $payload): void
+    {
+        $runEvents[] = [
+            'event' => $event,
+            'timestamp' => now()->toIso8601String(),
+            'data' => $payload,
+        ];
+
+        $this->webhook->notify($event, $payload);
+    }
+
+    /**
+     * Emits a single aggregated run payload when enabled.
+     *
+     * @param array<string, mixed> $artifact
+     */
+    private function maybeEmitSingleSummary(string $runId, string $pipeline, string $startedAt, array $artifact): void
+    {
+        if (!(bool) config('ml_automation.webhook.single_summary', false)) {
+            return;
+        }
+
+        $this->webhook->notify('ml.run.payload', [
+            'run_id' => $runId,
+            'pipeline' => $pipeline,
+            'started_at' => $startedAt,
+            'artifact' => $artifact,
+        ]);
     }
 
     /**

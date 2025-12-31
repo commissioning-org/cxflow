@@ -34,17 +34,19 @@ final class MlWebhookNotifier
             $enabled = (bool) ($fallback['enabled'] ?? false);
             $url = (string) ($fallback['url'] ?? '');
             $timeout = (int) ($fallback['timeout_seconds'] ?? 15);
+            $cfg = array_replace_recursive($cfg, $fallback);
         }
 
         if (!$enabled || $url === '') {
             return;
         }
 
+        $mode = (string) (($cfg['mode'] ?? 'multiple') ?: 'multiple');
+        $singleEvent = (string) (($cfg['single_event'] ?? 'ml.data') ?: 'ml.data');
+
         try {
-            Http::timeout($timeout)
-                ->acceptJson()
-                ->asJson()
-                ->post($url, [
+            if ($mode === 'multiple' || $mode === 'both') {
+                $this->post($url, $timeout, [
                     'event' => $event,
                     'event_version' => 1,
                     'timestamp' => now()->toIso8601String(),
@@ -53,13 +55,41 @@ final class MlWebhookNotifier
                         'env' => (string) config('app.env'),
                     ],
                     'data' => $payload,
-                ])
-                ->throw();
+                ]);
+            }
+
+            if ($mode === 'single' || $mode === 'both') {
+                $this->post($url, $timeout, [
+                    'event' => $singleEvent,
+                    'event_version' => 1,
+                    'timestamp' => now()->toIso8601String(),
+                    'app' => [
+                        'name' => (string) config('app.name'),
+                        'env' => (string) config('app.env'),
+                    ],
+                    'data' => [
+                        'type' => $event,
+                        'payload' => $payload,
+                    ],
+                ]);
+            }
         } catch (\Throwable $e) {
             Log::warning('ml_automation.webhook_failed', [
                 'event' => $event,
                 'message' => $e->getMessage(),
             ]);
         }
+    }
+
+    /**
+     * @param array<string, mixed> $body
+     */
+    private function post(string $url, int $timeout, array $body): void
+    {
+        Http::timeout($timeout)
+            ->acceptJson()
+            ->asJson()
+            ->post($url, $body)
+            ->throw();
     }
 }

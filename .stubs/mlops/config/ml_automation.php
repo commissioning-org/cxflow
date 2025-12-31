@@ -64,12 +64,26 @@ return [
     // Optional webhook for pipeline events. If disabled/empty, nothing is posted.
     // Falls back to automl.webhook when these are not set.
     'webhook' => [
+        // If true, include full payloads in webhook events (rows) and disable sampling.
+        // Warning: can be large and may include sensitive data.
+        'full_payload' => (bool) env('ML_AUTOMATION_WEBHOOK_FULL_PAYLOAD', false),
+
         'enabled' => (bool) env('ML_AUTOMATION_WEBHOOK_ENABLED', false),
         'url' => (string) env('ML_AUTOMATION_WEBHOOK_URL', ''),
         'timeout_seconds' => (int) env('ML_AUTOMATION_WEBHOOK_TIMEOUT_SECONDS', 15),
-        'include_rows' => (bool) env('ML_AUTOMATION_WEBHOOK_INCLUDE_ROWS', false),
+        'include_rows' => (bool) (env('ML_AUTOMATION_WEBHOOK_FULL_PAYLOAD', false) ? true : env('ML_AUTOMATION_WEBHOOK_INCLUDE_ROWS', false)),
 
         // Force small samples by default; avoids giant payloads.
-        'sample_rows' => (int) env('ML_AUTOMATION_WEBHOOK_SAMPLE_ROWS', 50),
+        'sample_rows' => (int) (env('ML_AUTOMATION_WEBHOOK_FULL_PAYLOAD', false) ? 0 : env('ML_AUTOMATION_WEBHOOK_SAMPLE_ROWS', 50)),
+
+        // Event mode:
+        // - multiple: keep original event names
+        // - single: send a single normalized event name and nest the original
+        // - both: send both
+        'mode' => env('ML_AUTOMATION_WEBHOOK_MODE', 'multiple'),
+        'single_event' => env('ML_AUTOMATION_WEBHOOK_SINGLE_EVENT', 'ml.data'),
+
+        // If true, also emits a single aggregated run payload on completion/failure.
+        'single_summary' => (bool) env('ML_AUTOMATION_WEBHOOK_SINGLE_SUMMARY', false),
     ],
 ];

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/ml_ingestion_event.schema.json",
+  "title": "ML Ingestion Event",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["event", "event_version", "timestamp", "app", "data"],
+  "properties": {
+    "event": {
+      "type": "string",
+      "description": "Event name. Typically ml.ingest.completed or ml.ingest.failed (or normalized ml.data with nested type)."
+    },
+    "event_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "app": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "env"],
+      "properties": {
+        "name": { "type": "string" },
+        "env": { "type": "string" }
+      }
+    },
+    "data": {
+      "description": "Event-specific payload. For single/normalized mode: {type, payload}. For multiple mode: payload directly.",
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ingestPayload"
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type", "payload"],
+          "properties": {
+            "type": { "type": "string" },
+            "payload": { "$ref": "#/$defs/ingestPayload" }
+          }
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "rowObject": {
+      "type": "object",
+      "description": "One row of tabular data. Keys are column names; values may be string/number/boolean/null/object/array.",
+      "additionalProperties": true
+    },
+    "ingestPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "pipeline"],
+      "properties": {
+        "run_id": {
+          "type": "string",
+          "description": "UUID for the pipeline run"
+        },
+        "pipeline": {
+          "type": "string",
+          "description": "Pipeline name (e.g. default)"
+        },
+        "source": {
+          "type": "string",
+          "description": "Dataset source (file path or URL)"
+        },
+        "row_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "columns": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "target": {
+          "type": "string",
+          "description": "Target column name if known"
+        },
+        "row_sample": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rowObject" },
+          "description": "Sample of rows for quick inspection (bounded by config)"
+        },
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rowObject" },
+          "description": "Full rows; present only when full payload/include_rows is enabled"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "error": {
+          "type": "string",
+          "description": "Machine-readable error string for failure events"
+        }
+      },
+      "allOf": [
+        {
+          "oneOf": [
+            {
+              "required": ["row_count", "columns", "target", "source"]
+            },
+            {
+              "required": ["error"]
+            }
+          ]
+        }
+      ]
+    }
+  }
+}
