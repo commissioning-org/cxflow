@@ -124,6 +124,7 @@ print(f"http_code={d.get(\"response\",{}).get(\"http_code\",\"\")}")
             ${{ steps.ingest.outputs.run_dir }}/files
             ${{ steps.ingest.outputs.run_dir }}/webhook.result.json
             ${{ steps.ingest.outputs.run_dir }}/route.*.result.json
+            ${{ steps.ingest.outputs.run_dir }}/supabase.upload.result.json
           if-no-files-found: ignore
           retention-days: 14
 

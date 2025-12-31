@@ -147,6 +147,31 @@ To enable downstream routing (fan-out) from `cx_orchestrate.php`:
 
 Keep URLs/headers in GitHub Secrets or local `.env`; do not commit them.
 
+## Automated file upload to Supabase Storage
+
+This repo includes an internal uploader that can automatically upload ingestion artifacts and extracted files to **Supabase Storage**.
+
+Files:
+- `ingestion/supabase_upload.php` (uploads a run directory to Supabase Storage)
+- `ingestion/cx_orchestrate.php` (will call the uploader automatically when enabled)
+
+Enable (local/dev or in GitHub Actions via secrets):
+- `SUPABASE_UPLOAD_ENABLED=true`
+- `SUPABASE_PROJECT_URL=https://<project>.supabase.co`
+- `SUPABASE_SERVICE_ROLE_KEY=...` (secret)
+- optional `SUPABASE_API_KEY=...` (secret; if omitted, service role key is used)
+
+Upload config:
+- `SUPABASE_BUCKET=cx-ingestion`
+- `SUPABASE_PREFIX=runs/<run_id>` (default: `runs/<basename(run_dir)>`)
+- `SUPABASE_UPSERT=true`
+- `SUPABASE_TIMEOUT_SECONDS=30`
+- `SUPABASE_INCLUDE_MANIFEST=true`
+- `SUPABASE_INCLUDE_ROWS=true`
+- `SUPABASE_INCLUDE_FILES=true`
+
+The uploader writes `supabase.upload.result.json` into the run directory (and the scheduled workflow uploads it as an artifact).
+
 ## AutoML service (internal)
 
 This repo includes an internal Python service in `./ml` that can:

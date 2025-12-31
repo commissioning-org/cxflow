@@ -143,6 +143,42 @@ function orch_read_text_cap(string $path, int $maxBytes): ?string
     return (string) file_get_contents($path, false, null, 0, $maxBytes);
 }
 
+function orch_run_supabase_upload(?string $runDir): ?array
+{
+    if (!is_string($runDir) || $runDir === '' || !is_dir($runDir)) {
+        return null;
+    }
+
+    $enabled = orch_bool((string) (getenv('SUPABASE_UPLOAD_ENABLED') ?: 'false'), false);
+    if (!$enabled) {
+        return null;
+    }
+
+    $php = PHP_BINARY;
+    $script = __DIR__ . '/supabase_upload.php';
+    if (!is_file($script)) {
+        return ['ok' => false, 'error' => 'missing_uploader_script'];
+    }
+
+    $cmd = escapeshellarg($php) . ' ' . escapeshellarg($script) . ' ' . escapeshellarg($runDir);
+    $out = [];
+    $rc = 0;
+    exec($cmd, $out, $rc);
+
+    $stdout = implode("\n", $out);
+    /** @var mixed $json */
+    $json = json_decode($stdout, true);
+    $res = is_array($json) ? $json : ['ok' => false, 'error' => 'invalid_uploader_output'];
+    $res['exit_code'] = $rc;
+
+    file_put_contents(
+        rtrim($runDir, '/') . '/supabase.upload.result.json',
+        json_encode($res, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+    );
+
+    return $res;
+}
+
 /**
  * @return array<int, array{name:string,url:string,timeout_seconds:int,headers:array<string,string>,include_manifest:bool,include_rows:bool,max_rows:int,max_ndjson_bytes:int}>
  */
@@ -405,6 +441,9 @@ if ($routeEnabled) {
     }
 }
 
+// Optional Supabase Storage upload (uploads run artifacts + extracted files).
+$supabaseUpload = orch_run_supabase_upload($runDir);
+
 // Print clean summary to stdout.
 echo json_encode([
     'ok' => $ok,
@@ -414,6 +453,7 @@ echo json_encode([
     'event' => $eventPath,
     'webhook' => $webhookResult,
     'routes' => $routeResults,
+    'supabase_upload' => $supabaseUpload,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
 
 exit($ok ? 0 : ($rc !== 0 ? $rc : 1));
