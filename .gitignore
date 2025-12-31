@@ -20,3 +20,14 @@ src/database/storage.env
 
 # Misc
 .env.local
+
+# CXFlow runtime data (memory, audit logs, etc.)
+.cxflow/memory/
+.cxflow/audit/
+.cxflow/metadata/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+workflows/__pycache__/

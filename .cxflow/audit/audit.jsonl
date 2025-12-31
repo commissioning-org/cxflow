@@ -1,3 +1,0 @@
-{"id": "43f56473fd3b414a9808afc9b34fe43e", "timestamp": "2025-12-31T23:42:07.844985+00:00", "operation": "query", "entity_type": "memory", "entity_id": "category=metrics,tags=None", "user": null, "success": true, "error": null, "metadata": {"result_count": 0}}
-{"id": "dde27ce1a0f0cc655b7caf8f83bc6162", "timestamp": "2025-12-31T23:42:07.845134+00:00", "operation": "search", "entity_type": "memory", "entity_id": "test", "user": null, "success": true, "error": null, "metadata": {"result_count": 0, "fields": null}}
-{"id": "69a3bc72d199c96cd6bd49c2b7d8a884", "timestamp": "2025-12-31T23:43:57.310807+00:00", "operation": "test", "entity_type": "test", "entity_id": "test_id", "user": null, "success": true, "error": null, "metadata": {}}
