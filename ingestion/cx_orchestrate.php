@@ -198,6 +198,101 @@ function orch_run_supabase_upload(?string $runDir): ?array
 }
 
 /**
+ * Run AutoML training via the ML service API.
+ *
+ * @param array<string, mixed>|null $manifest
+ * @param string|null $runDir
+ * @return array<string, mixed>|null
+ */
+function orch_run_automl_training(?array $manifest, ?string $runDir): ?array
+{
+    $enabled = orch_bool((string) (getenv('CX_AUTOML_ENABLED') ?: 'false'), false);
+    if (!$enabled) {
+        return null;
+    }
+
+    if (!is_array($manifest) || !is_string($runDir) || $runDir === '') {
+        return null;
+    }
+
+    $endpoint = rtrim((string) (getenv('CX_AUTOML_ENDPOINT') ?: 'http://localhost:8000'), '/');
+    $targetColumn = (string) (getenv('CX_AUTOML_TARGET_COLUMN') ?: 'label');
+    $timeout = (int) (getenv('CX_AUTOML_TIMEOUT_SECONDS') ?: 120);
+    $async = orch_bool((string) (getenv('CX_AUTOML_ASYNC') ?: 'true'), true);
+
+    // Get rows from ingestion
+    $rowsPath = $manifest['artifacts']['rows_ndjson'] ?? null;
+    if (!is_string($rowsPath) || !is_file($rowsPath)) {
+        return ['ok' => false, 'error' => 'no_training_data'];
+    }
+
+    // Read rows (capped)
+    $maxRows = (int) (getenv('CX_AUTOML_MAX_ROWS') ?: 10000);
+    $rows = orch_read_ndjson_rows($rowsPath, $maxRows);
+
+    if (count($rows) < 10) {
+        return ['ok' => false, 'error' => 'insufficient_rows', 'row_count' => count($rows)];
+    }
+
+    // Build training request
+    $trainEndpoint = $endpoint . ($async ? '/train/async' : '/train');
+    $payload = [
+        'rows' => $rows,
+        'target' => $targetColumn,
+        'enable_cv' => true,
+        'enable_tuning' => orch_bool((string) (getenv('CX_AUTOML_ENABLE_TUNING') ?: 'false'), false),
+        'model_name' => 'ingestion_' . ($manifest['run_id'] ?? gmdate('Ymd_His')),
+        'tags' => ['ingestion', 'automated'],
+    ];
+
+    $ch = curl_init($trainEndpoint);
+    if ($ch === false) {
+        return ['ok' => false, 'error' => 'curl_init_failed'];
+    }
+
+    $body = json_encode($payload, JSON_UNESCAPED_SLASHES);
+    if (!is_string($body)) {
+        return ['ok' => false, 'error' => 'json_encode_failed'];
+    }
+
+    curl_setopt_array($ch, [
+        CURLOPT_POST => true,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_FOLLOWLOCATION => true,
+        CURLOPT_CONNECTTIMEOUT => min(30, $timeout),
+        CURLOPT_TIMEOUT => max(30, $timeout),
+        CURLOPT_HTTPHEADER => [
+            'Content-Type: application/json',
+            'Accept: application/json',
+            'User-Agent: cxflow-orchestrator/1.0',
+        ],
+        CURLOPT_POSTFIELDS => $body,
+    ]);
+
+    $resp = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $err = curl_error($ch);
+    curl_close($ch);
+
+    if ($resp === false) {
+        $result = ['ok' => false, 'http_code' => $code, 'error' => $err];
+    } else {
+        /** @var mixed $json */
+        $json = json_decode((string) $resp, true);
+        $result = is_array($json) ? $json : ['ok' => false, 'error' => 'invalid_response'];
+        $result['http_code'] = $code;
+    }
+
+    // Store result
+    file_put_contents(
+        rtrim($runDir, '/') . '/automl.result.json',
+        json_encode($result, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+    );
+
+    return $result;
+}
+
+/**
  * @return array<int, array{name:string,url:string,timeout_seconds:int,headers:array<string,string>,include_manifest:bool,include_rows:bool,max_rows:int,max_ndjson_bytes:int}>
  */
 function orch_parse_targets(): array
@@ -462,6 +557,20 @@ if ($routeEnabled) {
 // Optional Supabase Storage upload (uploads run artifacts + extracted files).
 $supabaseUpload = orch_run_supabase_upload($runDir);
 
+// Optional TensorFlowOnSpark distributed training.
+$tfosResult = null;
+if (orch_bool((string) (getenv('TFOS_ENABLED') ?: 'false'), false)) {
+    $tfosOptions = [
+        'target_column' => (string) (getenv('TFOS_TARGET_COLUMN') ?: 'label'),
+        'epochs' => (int) (getenv('TFOS_EPOCHS') ?: 5),
+        'batch_size' => (int) (getenv('TFOS_BATCH_SIZE') ?: 64),
+    ];
+    $tfosResult = orch_run_tfos_training($manifest, $runDir, $tfosOptions);
+}
+
+// Optional AutoML service training.
+$automlResult = orch_run_automl_training($manifest, $runDir);
+
 // Print clean summary to stdout.
 echo json_encode([
     'ok' => $ok,
@@ -472,6 +581,8 @@ echo json_encode([
     'webhook' => $webhookResult,
     'routes' => $routeResults,
     'supabase_upload' => $supabaseUpload,
+    'tfos_training' => $tfosResult,
+    'automl_training' => $automlResult,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
 
 exit($ok ? 0 : ($rc !== 0 ? $rc : 1));
