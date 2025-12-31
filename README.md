@@ -2,6 +2,39 @@
 
 This repository scaffolds a **Linux/Apache/MySQL/PHP** environment tailored for the **Laravel** framework.
 
+## 🚀 New: Enhanced .cxflow Capabilities
+
+The CXFlow system now includes **significantly enhanced automation and data management capabilities**:
+
+- **Advanced Query Engine**: Filter, search, and aggregate data with 11 operators
+- **Macro Execution**: Actually execute macros with conditionals, loops, and transformations
+- **Version Control**: Full history with rollback to any previous state
+- **Audit Trail**: Complete logging for compliance and debugging
+- **Template System**: 4 built-in templates for common patterns
+- **Batch Operations**: Efficient bulk operations
+- **Encryption Support**: Secure sensitive data
+
+### Quick Example
+
+```python
+from workflows import EnhancedMemoryManager, MemoryQuery, QueryOperator
+
+# Initialize with versioning
+manager = EnhancedMemoryManager(enable_versioning=True)
+
+# Store data
+manager.set("config", {"theme": "dark"}, category="settings", user="admin")
+
+# Query with filters
+query = MemoryQuery().with_category("settings")
+query.add_filter("metadata.priority", QueryOperator.GT, 5)
+results = manager.query(query)
+```
+
+**Documentation**: See [`docs/CXFLOW_ENHANCED.md`](docs/CXFLOW_ENHANCED.md) and [`docs/ENHANCEMENT_SUMMARY.md`](docs/ENHANCEMENT_SUMMARY.md)
+
+**Examples**: Run `python workflows/examples/enhanced_usage.py` for comprehensive demos
+
 ## What you get
 
 - **Apache + PHP 8.3** (with `mod_rewrite` enabled and `DocumentRoot` set to `public/`)
