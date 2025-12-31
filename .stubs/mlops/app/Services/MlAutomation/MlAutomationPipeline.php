@@ -46,7 +46,7 @@ final class MlAutomationPipeline
         $this->webhook->notify('ml.run.started', [
             'run_id' => $runId,
             'pipeline' => $pipeline,
-            'ts' => $startedAt,
+            'started_at' => $startedAt,
         ]);
 
         $source = (string) ($cfg['source'] ?? '');
@@ -65,6 +65,8 @@ final class MlAutomationPipeline
 
         $includeRows = (bool) config('ml_automation.ingest.include_rows', false);
         $hookIncludeRows = (bool) config('ml_automation.webhook.include_rows', false);
+        $sampleRows = max(0, (int) config('ml_automation.webhook.sample_rows', (int) config('ml_automation.ingest.sample_rows', 50)));
+        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
 
         $target = (string) ($cfg['target'] ?? '');
         if ($target === '') {
@@ -81,7 +83,8 @@ final class MlAutomationPipeline
             'columns' => array_keys((array) ($rows[0] ?? [])),
             'target' => $target,
             'source' => $source,
-            'rows' => $hookIncludeRows ? $rows : null,
+            'row_sample' => $rowSample,
+            ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
         ]);
 
         // Train via AutoML microservice
@@ -111,7 +114,8 @@ final class MlAutomationPipeline
                 'row_count' => count($rows),
                 'target' => $target,
                 'columns' => array_keys((array) ($rows[0] ?? [])),
-                'rows' => $includeRows ? $rows : null,
+                'row_sample' => $rowSample,
+                ...( $includeRows ? ['rows' => $rows] : [] ),
             ],
             'train' => $trainResult,
             'model_card' => $modelCard,
@@ -127,7 +131,8 @@ final class MlAutomationPipeline
                 'problem' => $problem,
                 'metric' => $metric,
                 'row_count' => count($rows),
-                'rows' => $hookIncludeRows ? $rows : null,
+                'row_sample' => $rowSample,
+                ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
             ],
             'response' => $trainResult,
             'model_card' => $modelCard,

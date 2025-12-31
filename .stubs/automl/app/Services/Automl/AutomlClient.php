@@ -22,6 +22,8 @@ final class AutomlClient
         $baseUrl = rtrim((string) config('automl.base_url'), '/');
         $timeout = (int) config('automl.timeout_seconds', 60);
         $includeRows = (bool) config('automl.webhook.include_rows', false);
+        $sampleRows = max(0, (int) config('automl.webhook.sample_rows', 50));
+        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
 
         try {
             $resp = Http::timeout($timeout)
@@ -53,7 +55,8 @@ final class AutomlClient
                     'problem' => $problem,
                     'metric' => $metric,
                     'row_count' => count($rows),
-                    'rows' => $includeRows ? $rows : null,
+                    'row_sample' => $rowSample,
+                    ...( $includeRows ? ['rows' => $rows] : [] ),
                 ],
                 'response' => $result,
             ]);
@@ -67,7 +70,8 @@ final class AutomlClient
                     'problem' => $problem,
                     'metric' => $metric,
                     'row_count' => count($rows),
-                    'rows' => $includeRows ? $rows : null,
+                    'row_sample' => $rowSample,
+                    ...( $includeRows ? ['rows' => $rows] : [] ),
                 ],
                 'error' => 'training_failed',
             ]);
@@ -84,6 +88,9 @@ final class AutomlClient
         $baseUrl = rtrim((string) config('automl.base_url'), '/');
         $timeout = (int) config('automl.timeout_seconds', 60);
         $includeRows = (bool) config('automl.webhook.include_rows', false);
+        $sampleRows = max(0, (int) config('automl.webhook.sample_rows', 50));
+        $samplePreds = max(0, (int) config('automl.webhook.sample_predictions', 200));
+        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
 
         try {
             $resp = Http::timeout($timeout)
@@ -100,16 +107,19 @@ final class AutomlClient
             $preds = $json['predictions'] ?? [];
 
             $out = is_array($preds) ? array_values($preds) : [];
+            $predSample = $samplePreds > 0 ? array_slice($out, 0, $samplePreds) : [];
 
             $this->webhook->notify('automl.predict.completed', [
                 'request' => [
                     'model_id' => $modelId,
                     'row_count' => count($rows),
-                    'rows' => $includeRows ? $rows : null,
+                    'row_sample' => $rowSample,
+                    ...( $includeRows ? ['rows' => $rows] : [] ),
                 ],
                 'response' => [
                     'prediction_count' => count($out),
-                    'predictions' => $out,
+                    'prediction_sample' => $predSample,
+                    ...( $samplePreds === 0 ? ['predictions' => $out] : [] ),
                 ],
             ]);
 
@@ -119,7 +129,8 @@ final class AutomlClient
                 'request' => [
                     'model_id' => $modelId,
                     'row_count' => count($rows),
-                    'rows' => $includeRows ? $rows : null,
+                    'row_sample' => $rowSample,
+                    ...( $includeRows ? ['rows' => $rows] : [] ),
                 ],
                 'error' => 'prediction_failed',
             ]);

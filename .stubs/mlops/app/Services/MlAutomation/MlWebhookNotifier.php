@@ -46,9 +46,13 @@ final class MlWebhookNotifier
                 ->asJson()
                 ->post($url, [
                     'event' => $event,
-                    'ts' => now()->toIso8601String(),
-                    'app' => (string) config('app.name'),
-                    'payload' => $payload,
+                    'event_version' => 1,
+                    'timestamp' => now()->toIso8601String(),
+                    'app' => [
+                        'name' => (string) config('app.name'),
+                        'env' => (string) config('app.env'),
+                    ],
+                    'data' => $payload,
                 ])
                 ->throw();
         } catch (\Throwable $e) {

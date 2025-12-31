@@ -26,5 +26,11 @@ return [
 
         // If true, includes raw rows in webhook payloads (can be sensitive/large).
         'include_rows' => (bool) env('AUTOML_WEBHOOK_INCLUDE_ROWS', false),
+
+        // Always include a small sample (safer than full rows for Power Automate).
+        'sample_rows' => (int) env('AUTOML_WEBHOOK_SAMPLE_ROWS', 50),
+
+        // For predictions, include only the first N in webhook payload.
+        'sample_predictions' => (int) env('AUTOML_WEBHOOK_SAMPLE_PREDICTIONS', 200),
     ],
 ];

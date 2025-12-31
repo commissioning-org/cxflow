@@ -14,10 +14,20 @@ final class AutomlWebhookNotifier
      */
     public function notify(string $event, array $payload): void
     {
+        /** @var array<string, mixed> $cfg */
         $cfg = (array) config('automl.webhook', []);
         $enabled = (bool) ($cfg['enabled'] ?? false);
         $url = (string) ($cfg['url'] ?? '');
         $timeout = (int) ($cfg['timeout_seconds'] ?? 15);
+
+        // If AutoML webhook isn't configured, fall back to ML automation webhook.
+        if (!$enabled || $url === '') {
+            /** @var array<string, mixed> $fallback */
+            $fallback = (array) config('ml_automation.webhook', []);
+            $enabled = (bool) ($fallback['enabled'] ?? false);
+            $url = (string) ($fallback['url'] ?? '');
+            $timeout = (int) ($fallback['timeout_seconds'] ?? 15);
+        }
 
         if (!$enabled || $url === '') {
             return;
@@ -29,9 +39,13 @@ final class AutomlWebhookNotifier
                 ->asJson()
                 ->post($url, [
                     'event' => $event,
-                    'ts' => now()->toIso8601String(),
-                    'app' => config('app.name'),
-                    'payload' => $payload,
+                    'event_version' => 1,
+                    'timestamp' => now()->toIso8601String(),
+                    'app' => [
+                        'name' => (string) config('app.name'),
+                        'env' => (string) config('app.env'),
+                    ],
+                    'data' => $payload,
                 ])
                 ->throw();
         } catch (\Throwable $e) {

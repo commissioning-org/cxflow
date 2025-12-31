@@ -31,6 +31,9 @@ return [
         'timeout_seconds' => (int) env('ML_AUTOMATION_INGEST_TIMEOUT_SECONDS', 30),
         // If true, include raw rows in stored artifacts/webhooks (can be sensitive/large).
         'include_rows' => (bool) env('ML_AUTOMATION_INCLUDE_ROWS', false),
+
+        // Always keep a small sample of rows for reporting.
+        'sample_rows' => (int) env('ML_AUTOMATION_SAMPLE_ROWS', 50),
     ],
 
     // One or more automated pipelines
@@ -65,5 +68,8 @@ return [
         'url' => (string) env('ML_AUTOMATION_WEBHOOK_URL', ''),
         'timeout_seconds' => (int) env('ML_AUTOMATION_WEBHOOK_TIMEOUT_SECONDS', 15),
         'include_rows' => (bool) env('ML_AUTOMATION_WEBHOOK_INCLUDE_ROWS', false),
+
+        // Force small samples by default; avoids giant payloads.
+        'sample_rows' => (int) env('ML_AUTOMATION_WEBHOOK_SAMPLE_ROWS', 50),
     ],
 ];
