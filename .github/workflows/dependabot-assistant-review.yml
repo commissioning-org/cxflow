@@ -41,6 +41,10 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            if (!fs.existsSync('review_comment.md')) {
+              core.info('review_comment.md missing; nothing to comment.');
+              return;
+            }
             const body = fs.readFileSync('review_comment.md', 'utf8');
             await github.rest.issues.createComment({
               owner: context.repo.owner,

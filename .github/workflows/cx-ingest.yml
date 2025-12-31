@@ -8,10 +8,16 @@ on:
 
 permissions:
   contents: read
+  issues: write
+
+concurrency:
+  group: cx-ingest
+  cancel-in-progress: false
 
 jobs:
   ingest:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
@@ -31,6 +37,126 @@ jobs:
             exit 0
           fi
 
-          # Run the request. The URL contains a signature; do not echo it.
-          php ingestion/php_cx_request.php "$CX_INGESTION_URI" |
-            python -c 'import re,sys; t=sys.stdin.read(); t=re.sub(r"sig=[^&\"\\s]+","sig=<redacted>",t); t=re.sub(r"sv=[^&\"\\s]+","sv=<redacted>",t); t=re.sub(r"sp=[^&\"\\s]+","sp=<redacted>",t); print(t)'
+          mkdir -p ingestion/runs
+
+          # Fully automated retry/backoff loop.
+          # The URL contains a signature; do not echo it.
+          attempts=5
+          delay=5
+          ok=0
+          last_out=""
+
+          for i in $(seq 1 "$attempts"); do
+            echo "Attempt $i/$attempts"
+
+            set +e
+            out=$(CX_INGESTION_OUT_DIR="ingestion/runs" php ingestion/php_cx_request.php "$CX_INGESTION_URI")
+            rc=$?
+            set -e
+
+            last_out="$out"
+            printf "%s\n" "$out" > ingestion/last_run_output.json
+
+            # Determine success:
+            # - rc==0 and stdout JSON ok==true
+            if [ "$rc" -eq 0 ] && python - <<'PY'
+import json,sys
+try:
+  d=json.load(open('ingestion/last_run_output.json'))
+  print('1' if d.get('ok') is True else '0')
+except Exception:
+  print('0')
+PY
+            | grep -q '^1$'; then
+              ok=1
+              break
+            fi
+
+            echo "Run failed (exit=$rc). Sleeping ${delay}s before retry..."
+            sleep "$delay"
+            delay=$((delay * 2))
+            if [ "$delay" -gt 60 ]; then delay=60; fi
+          done
+
+          # Redact any signed parameters that might appear in output (defense-in-depth).
+          python -c 'import re,sys; t=open("ingestion/last_run_output.json","r").read(); t=re.sub(r"sig=[^&\"\\s]+","sig=<redacted>",t); t=re.sub(r"sv=[^&\"\\s]+","sv=<redacted>",t); t=re.sub(r"sp=[^&\"\\s]+","sp=<redacted>",t); print(t)' \
+            > ingestion/last_run_output.redacted.json
+
+          # Surface key metadata for later steps.
+          python - <<'PY'
+import json
+d=json.load(open('ingestion/last_run_output.json'))
+print(f"run_id={d.get('run_id','')}")
+print(f"run_dir={d.get('run_dir','')}")
+print(f"ok={str(d.get('ok',False)).lower()}")
+print(f"http_code={d.get('response',{}).get('http_code','')}")
+PY
+          >> "$GITHUB_OUTPUT"
+
+          # Do not fail the job immediately; we handle notification + artifacts below.
+          if [ "$ok" -ne 1 ]; then
+            echo "Ingestion failed after retries."
+          fi
+        id: ingest
+
+      - name: Upload ingestion artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cx-ingestion-${{ steps.ingest.outputs.run_id || github.run_id }}
+          path: |
+            ingestion/last_run_output.redacted.json
+            ingestion/last_run_output.json
+            ${{ steps.ingest.outputs.run_dir }}/manifest.json
+            ${{ steps.ingest.outputs.run_dir }}/response.headers.txt
+            ${{ steps.ingest.outputs.run_dir }}/response.body
+            ${{ steps.ingest.outputs.run_dir }}/response.json
+            ${{ steps.ingest.outputs.run_dir }}/rows.ndjson
+            ${{ steps.ingest.outputs.run_dir }}/rows.csv
+            ${{ steps.ingest.outputs.run_dir }}/files
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Open issue on persistent failure
+        if: steps.ingest.outputs.ok != 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const runId = '${{ steps.ingest.outputs.run_id }}' || String(context.runId);
+            const httpCode = '${{ steps.ingest.outputs.http_code }}' || 'unknown';
+            const redacted = fs.existsSync('ingestion/last_run_output.redacted.json')
+              ? fs.readFileSync('ingestion/last_run_output.redacted.json', 'utf8')
+              : '';
+
+            const title = `CX ingestion failed (run ${runId})`;
+            const body = [
+              `Automated ingestion failed after retries.`,
+              ``,
+              `- workflow run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              `- run_id: ${runId}`,
+              `- http_code: ${httpCode}`,
+              ``,
+              `Redacted output:`,
+              '```json',
+              redacted.slice(0, 60000),
+              '```'
+            ].join('\n');
+
+            // Avoid spamming duplicate issues: search recent open issues with same title.
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 50
+            });
+            const exists = issues.some(i => i.title === title);
+            if (!exists) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['ingestion', 'automation', 'failed']
+              });
+            }
