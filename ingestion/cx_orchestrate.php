@@ -10,6 +10,8 @@ declare(strict_types=1);
  *  2) Read the generated manifest.json
  *  3) Write a clean orchestration event payload (event.json)
  *  4) Optionally POST the event to a webhook (Power Automate / etc)
+ *  5) Optional TensorFlowOnSpark distributed training integration
+ *  6) Optional AutoML service integration
  *
  * Usage:
  *   php ingestion/cx_orchestrate.php 'https://...'
@@ -26,7 +28,23 @@ declare(strict_types=1);
  *     - headers are treated as secrets (not printed)
  *     - include_rows sends parsed rows (capped)
  *     - max_ndjson_bytes includes ndjson text (capped) when rows.ndjson exists
+ *
+ * TensorFlowOnSpark Integration (optional):
+ *   TFOS_ENABLED=true|false (default false)
+ *   TFOS_SPARK_MASTER=spark://localhost:7077
+ *   TFOS_CLUSTER_SIZE=2
+ *   TFOS_EPOCHS=5
+ *   TFOS_ASYNC=true (run training async)
+ *   See tfos_integration.php for full configuration
+ *
+ * AutoML Integration (optional):
+ *   CX_AUTOML_ENABLED=true|false (default false)
+ *   CX_AUTOML_ENDPOINT=http://localhost:8000
+ *   CX_AUTOML_TARGET_COLUMN=label
  */
+
+// Include TFoS integration module
+require_once __DIR__ . '/tfos_integration.php';
 
 function orch_bool(string $v, bool $default = false): bool
 {
