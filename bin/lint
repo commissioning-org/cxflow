@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+failures=0
+
+say() { printf "%s\n" "$*"; }
+
+run() {
+  local desc="$1"; shift
+  say "==> ${desc}"
+  if "$@"; then
+    return 0
+  fi
+  say "!! FAILED: ${desc}"
+  failures=$((failures + 1))
+  return 0
+}
+
+# Prefer python3 where available.
+PYTHON_BIN=""
+if command -v python3 >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+elif command -v python >/dev/null 2>&1; then
+  PYTHON_BIN="python"
+fi
+
+# 1) Bash syntax checks
+if compgen -G "bin/*" > /dev/null; then
+  while IFS= read -r -d '' f; do
+    if [ -f "$f" ]; then
+      run "bash -n ${f}" bash -n "$f"
+    fi
+  done < <(find bin -maxdepth 1 -type f -print0)
+fi
+
+# 2) Docker Compose config validation (best-effort)
+if command -v docker >/dev/null 2>&1; then
+  run "docker compose config" docker compose config >/dev/null
+else
+  say "==> docker not available; skipping compose config check"
+fi
+
+# 3) Python syntax checks (ML service)
+if [ -n "$PYTHON_BIN" ]; then
+  run "python compileall (ml/app)" "$PYTHON_BIN" -m compileall -q ml/app
+else
+  say "==> python not available; skipping python checks"
+fi
+
+# 4) PHP syntax checks
+if command -v php >/dev/null 2>&1; then
+  # ingestion scripts
+  if compgen -G "ingestion/*.php" > /dev/null; then
+    while IFS= read -r -d '' f; do
+      run "php -l ${f}" php -l "$f" >/dev/null
+    done < <(find ingestion -maxdepth 1 -type f -name "*.php" -print0)
+  fi
+
+  # stubs
+  if [ -d ".stubs" ]; then
+    while IFS= read -r -d '' f; do
+      run "php -l ${f}" php -l "$f" >/dev/null
+    done < <(find .stubs -type f -name "*.php" -print0)
+  fi
+else
+  say "==> php not available; skipping php checks"
+fi
+
+# Summary
+if [ "$failures" -ne 0 ]; then
+  say ""
+  say "Lint failed: ${failures} checks failed."
+  exit 1
+fi
+
+say ""
+say "Lint OK"

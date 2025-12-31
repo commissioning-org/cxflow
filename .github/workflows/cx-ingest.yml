@@ -27,6 +27,11 @@ jobs:
           php-version: "8.3"
           tools: none
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
       - name: Run ingestion GET request
         env:
           CX_INGESTION_URI: ${{ secrets.CX_INGESTION_URI }}
@@ -59,15 +64,14 @@ jobs:
 
             # Determine success:
             # - rc==0 and stdout JSON ok==true
-            if [ "$rc" -eq 0 ] && python - <<'PY'
-import json,sys
+            parsed_ok=$(python3 -c 'import json; 
 try:
-  d=json.load(open('ingestion/last_run_output.json'))
-  print('1' if d.get('ok') is True else '0')
+  d=json.load(open("ingestion/last_run_output.json"))
+  print("1" if d.get("ok") is True else "0")
 except Exception:
-  print('0')
-PY
-            | grep -q '^1$'; then
+  print("0")
+')
+            if [ "$rc" -eq 0 ] && [ "$parsed_ok" = "1" ]; then
               ok=1
               break
             fi
@@ -79,19 +83,16 @@ PY
           done
 
           # Redact any signed parameters that might appear in output (defense-in-depth).
-          python -c 'import re,sys; t=open("ingestion/last_run_output.json","r").read(); t=re.sub(r"sig=[^&\"\\s]+","sig=<redacted>",t); t=re.sub(r"sv=[^&\"\\s]+","sv=<redacted>",t); t=re.sub(r"sp=[^&\"\\s]+","sp=<redacted>",t); print(t)' \
+          python3 -c 'import re,sys; t=open("ingestion/last_run_output.json","r").read(); t=re.sub(r"sig=[^&\"\\s]+","sig=<redacted>",t); t=re.sub(r"sv=[^&\"\\s]+","sv=<redacted>",t); t=re.sub(r"sp=[^&\"\\s]+","sp=<redacted>",t); print(t)' \
             > ingestion/last_run_output.redacted.json
 
           # Surface key metadata for later steps.
-          python - <<'PY'
-import json
-d=json.load(open('ingestion/last_run_output.json'))
-print(f"run_id={d.get('run_id','')}")
-print(f"run_dir={d.get('run_dir','')}")
-print(f"ok={str(d.get('ok',False)).lower()}")
-print(f"http_code={d.get('response',{}).get('http_code','')}")
-PY
-          >> "$GITHUB_OUTPUT"
+          python3 -c 'import json; d=json.load(open("ingestion/last_run_output.json")); 
+print(f"run_id={d.get(\"run_id\",\"\")}")
+print(f"run_dir={d.get(\"run_dir\",\"\")}")
+print(f"ok={str(d.get(\"ok\",False)).lower()}")
+print(f"http_code={d.get(\"response\",{}).get(\"http_code\",\"\")}")
+' >> "$GITHUB_OUTPUT"
 
           # Do not fail the job immediately; we handle notification + artifacts below.
           if [ "$ok" -ne 1 ]; then
@@ -116,6 +117,50 @@ PY
             ${{ steps.ingest.outputs.run_dir }}/files
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Add workflow summary
+        if: always()
+        run: |
+          {
+            echo "## CX ingestion summary";
+            echo "";
+            echo "- ok: ${{ steps.ingest.outputs.ok }}";
+            echo "- http_code: ${{ steps.ingest.outputs.http_code }}";
+            echo "- run_id: ${{ steps.ingest.outputs.run_id }}";
+            echo "- run_dir: ${{ steps.ingest.outputs.run_dir }}";
+            echo "";
+            echo "Artifacts are uploaded for this run.";
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Close previous failure issues (on success)
+        if: steps.ingest.outputs.ok == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const titlePrefix = 'CX ingestion failed (';
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'ingestion,failed',
+              per_page: 100,
+            });
+
+            const toClose = issues.filter(i => typeof i.title === 'string' && i.title.startsWith(titlePrefix));
+            for (const issue of toClose) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `Ingestion succeeded in workflow run ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}. Closing automatically.`,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+              });
+            }
 
       - name: Open issue on persistent failure
         if: steps.ingest.outputs.ok != 'true'
@@ -160,3 +205,9 @@ PY
                 labels: ['ingestion', 'automation', 'failed']
               });
             }
+
+      - name: Fail workflow on persistent failure
+        if: steps.ingest.outputs.ok != 'true'
+        run: |
+          echo "Ingestion did not succeed after retries. Marking workflow as failed."
+          exit 1

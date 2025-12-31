@@ -3,6 +3,15 @@ description: "Lightweight repo checks (no secrets)"
 runs:
   using: "composite"
   steps:
+    - name: Repo lint (bin/lint)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -f "bin/lint" ]; then
+          bash bin/lint
+          exit 0
+        fi
+
     - name: Bash syntax check
       shell: bash
       run: |

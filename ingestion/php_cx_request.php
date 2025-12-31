@@ -474,3 +474,5 @@ echo json_encode([
         'decoded_files_count' => count($fileArtifacts),
     ],
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
+
+exit($isSuccess ? 0 : 1);
