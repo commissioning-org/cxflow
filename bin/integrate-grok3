@@ -33,24 +33,99 @@ copy_stub "app/Console/Commands/AssistantRun.php"
 
 # Add env hints to Laravel .env.example (idempotent)
 laravel_env_example="src/.env.example"
-if [ -f "$laravel_env_example" ] && ! grep -q "ASSISTANT_API_KEY" "$laravel_env_example"; then
-  cat >> "$laravel_env_example" <<'ENV'
+if [ -f "$laravel_env_example" ]; then
+  if ! grep -q "ASSISTANT_API_KEY" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
 
 # Assistant (server-side)
 ASSISTANT_API_KEY=
 ASSISTANT_MODEL=grok-3
 ASSISTANT_BASE_URL=https://models.inference.ai.azure.com
 ASSISTANT_ALLOW_OTHER_MODELS=false
-ASSISTANT_TIMEOUT_SECONDS=60
+ASSISTANT_PROVIDER=inference
+ENV
+  fi
 
-# Automation tuning
+  if ! grep -q "ASSISTANT_TIMEOUT_SECONDS" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Transport
+ASSISTANT_TIMEOUT_SECONDS=60
+ASSISTANT_CONNECT_TIMEOUT_SECONDS=10
+ASSISTANT_CHAT_COMPLETIONS_PATH=/v1/chat/completions
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_SYSTEM" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Defaults
 ASSISTANT_SYSTEM="Be concise and accurate."
+ASSISTANT_TEMPERATURE=0.2
+# ASSISTANT_MAX_TOKENS=
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_CACHE_PREFIX" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Caching
 ASSISTANT_CACHE_ENABLED=true
 ASSISTANT_CACHE_TTL_SECONDS=300
+ASSISTANT_CACHE_PREFIX=assistant:
+ASSISTANT_CACHE_SAMPLE_RATE=1.0
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_RETRY_MAX_DELAY_MS" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Retries
 ASSISTANT_RETRY_COUNT=2
 ASSISTANT_RETRY_BASE_DELAY_MS=250
-ASSISTANT_JSON_FIX_ATTEMPTS=2
+ASSISTANT_RETRY_MAX_DELAY_MS=2000
+ASSISTANT_RETRY_JITTER_MS=150
 ENV
+  fi
+
+  if ! grep -q "ASSISTANT_JSON_FORCE_PROMPT" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# JSON helpers
+ASSISTANT_JSON_FIX_ATTEMPTS=2
+ASSISTANT_JSON_FORCE_PROMPT="You must reply with ONLY a single valid JSON object. Do not include markdown."
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_LOG_ENABLED" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Logging (internal)
+ASSISTANT_LOG_ENABLED=true
+ASSISTANT_LOG_LEVEL=debug
+ASSISTANT_LOG_PROMPTS=false
+ASSISTANT_LOG_RESPONSES=false
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_CB_ENABLED" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Circuit breaker (optional)
+ASSISTANT_CB_ENABLED=false
+ASSISTANT_CB_FAILURE_THRESHOLD=10
+ASSISTANT_CB_COOLDOWN_SECONDS=60
+ENV
+  fi
+
+  if ! grep -q "ASSISTANT_RATE_LIMIT_ENABLED" "$laravel_env_example"; then
+    cat >> "$laravel_env_example" <<'ENV'
+
+# Soft rate limit (optional)
+ASSISTANT_RATE_LIMIT_ENABLED=false
+ASSISTANT_RATE_LIMIT_PER_MINUTE=60
+ENV
+  fi
 fi
 
 # Optionally add to Laravel .env (do not overwrite existing values)
@@ -59,19 +134,51 @@ if [ -f "$laravel_env" ] && ! grep -q "ASSISTANT_API_KEY" "$laravel_env"; then
   cat >> "$laravel_env" <<'ENV'
 
 # Assistant (do not commit real tokens)
-ASSISTANT_API_KEY=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
+ASSISTANT_API_KEY=
 ASSISTANT_MODEL=grok-3
 ASSISTANT_BASE_URL=https://models.inference.ai.azure.com
 ASSISTANT_ALLOW_OTHER_MODELS=false
-ASSISTANT_TIMEOUT_SECONDS=60
+ASSISTANT_PROVIDER=inference
 
-# Automation tuning
+# Transport
+ASSISTANT_TIMEOUT_SECONDS=60
+ASSISTANT_CONNECT_TIMEOUT_SECONDS=10
+ASSISTANT_CHAT_COMPLETIONS_PATH=/v1/chat/completions
+
+# Defaults
 ASSISTANT_SYSTEM="Be concise and accurate."
+ASSISTANT_TEMPERATURE=0.2
+
+# Caching
 ASSISTANT_CACHE_ENABLED=true
 ASSISTANT_CACHE_TTL_SECONDS=300
+ASSISTANT_CACHE_PREFIX=assistant:
+ASSISTANT_CACHE_SAMPLE_RATE=1.0
+
+# Retries
 ASSISTANT_RETRY_COUNT=2
 ASSISTANT_RETRY_BASE_DELAY_MS=250
+ASSISTANT_RETRY_MAX_DELAY_MS=2000
+ASSISTANT_RETRY_JITTER_MS=150
+
+# JSON helpers
 ASSISTANT_JSON_FIX_ATTEMPTS=2
+ASSISTANT_JSON_FORCE_PROMPT="You must reply with ONLY a single valid JSON object. Do not include markdown."
+
+# Logging (internal)
+ASSISTANT_LOG_ENABLED=true
+ASSISTANT_LOG_LEVEL=debug
+ASSISTANT_LOG_PROMPTS=false
+ASSISTANT_LOG_RESPONSES=false
+
+# Circuit breaker (optional)
+ASSISTANT_CB_ENABLED=false
+ASSISTANT_CB_FAILURE_THRESHOLD=10
+ASSISTANT_CB_COOLDOWN_SECONDS=60
+
+# Soft rate limit (optional)
+ASSISTANT_RATE_LIMIT_ENABLED=false
+ASSISTANT_RATE_LIMIT_PER_MINUTE=60
 ENV
 fi
 

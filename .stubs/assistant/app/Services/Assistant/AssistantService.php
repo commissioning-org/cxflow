@@ -4,7 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\Assistant;
 
+use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
@@ -39,27 +41,36 @@ final class AssistantService
             ['role' => 'user', 'content' => $prompt],
         ];
 
-        use Illuminate\Support\Carbon;
-        return $this->withCachingAndRetries(
+        if ((bool) config('assistant.logging.log_prompts', false)) {
+            $this->log('assistant.prompt', ['kind' => 'text', 'messages' => $messages]);
+        }
+
+        $result = $this->withCachingAndRetries(
             kind: 'text',
             cacheKey: $this->cacheKey('text', $messages, $options),
             ttlSeconds: $options['cache_ttl_seconds'],
             enabled: $options['cache_enabled'],
             fn: function () use ($messages, $options): string {
-                // Prefer status checks from any underlying HTTP exception (if present).
-                $cur = $e;
-                while ($cur !== null) {
-                    if ($cur instanceof \Illuminate\Http\Client\RequestException) {
-                        $status = $cur->response?->status();
+                return $this->client->chatText(
+                    messages: $messages,
+                    model: $options['model'],
+                    temperature: $options['temperature'],
+                    maxTokens: $options['max_tokens'],
+                    tools: $options['tools'],
+                    toolChoice: $options['tool_choice'],
+                    responseFormat: $options['response_format'],
                 );
-                        if (is_int($status)) {
-                            return in_array($status, $retryOnStatus, true);
-                        }
+            },
+        );
 
-                        return $retryOnConnection;
-                    }
+        if ((bool) config('assistant.logging.log_responses', false)) {
+            $this->log('assistant.response', ['kind' => 'text', 'text' => $result]);
+        }
 
-                    $cur = $cur->getPrevious();
+        return $result;
+    }
+
+    /**
      * Structured JSON response with retries.
      *
      * Returns decoded JSON array; throws if it can't be parsed within retry budget.
@@ -71,12 +82,16 @@ final class AssistantService
         $options = $this->normalizeOptions($options);
 
         $this->enforceRateLimit();
-                if (is_string($openUntil) && $openUntil !== '' && now()->lt(Carbon::parse($openUntil))) {
+        $this->guardCircuitBreaker();
 
         $messages = [
             ['role' => 'system', 'content' => $options['system'] ?? $this->defaultSystem()],
             ['role' => 'user', 'content' => $this->forceJsonPrompt($prompt)],
         ];
+
+        if ((bool) config('assistant.logging.log_prompts', false)) {
+            $this->log('assistant.prompt', ['kind' => 'json', 'messages' => $messages]);
+        }
 
         $raw = $this->withCachingAndRetries(
             kind: 'json',
@@ -98,6 +113,9 @@ final class AssistantService
 
         $decoded = $this->decodeJsonBestEffort($raw);
         if ($decoded !== null) {
+            if ((bool) config('assistant.logging.log_responses', false)) {
+                $this->log('assistant.response', ['kind' => 'json', 'json' => $decoded]);
+            }
             return $decoded;
         }
 
@@ -106,11 +124,14 @@ final class AssistantService
         for ($i = 0; $i < $maxJsonFixAttempts; $i++) {
             $repair = $this->text(
                 prompt: "Return ONLY valid JSON for this content, with no extra text. Content:\n" . $raw,
-                options: array_merge($options, ['temperature' => 0.0, 'cache_enabled' => false]),
+                options: array_merge($options, ['temperature' => 0.0, 'cache_enabled' => false, 'response_format' => ['type' => 'json_object']]),
             );
 
             $decoded = $this->decodeJsonBestEffort($repair);
             if ($decoded !== null) {
+                if ((bool) config('assistant.logging.log_responses', false)) {
+                    $this->log('assistant.response', ['kind' => 'json', 'json' => $decoded]);
+                }
                 return $decoded;
             }
         }
@@ -128,8 +149,6 @@ final class AssistantService
     public function jsonSchema(string $prompt, array $schema, string $schemaName = 'schema', array $options = []): array
     {
         $options = $this->normalizeOptions($options);
-
-        // Prefer schema mode; if the upstream rejects it, retries will kick in.
         $options['response_format'] = [
             'type' => 'json_schema',
             'json_schema' => [
@@ -143,7 +162,7 @@ final class AssistantService
     }
 
     /**
-     * @return array{model:?string, temperature:float, max_tokens:?int, system:?string, cache_enabled:bool, cache_ttl_seconds:int, retries:int, retry_base_delay_ms:int, tools:?array, tool_choice:mixed, json_fix_attempts:int}
+     * @return array{model:?string, temperature:float, max_tokens:?int, system:?string, cache_enabled:bool, cache_ttl_seconds:int, retries:int, retry_base_delay_ms:int, tools:?array, tool_choice:mixed, json_fix_attempts:int, response_format:?array}
      */
     private function normalizeOptions(array $options): array
     {
@@ -156,7 +175,6 @@ final class AssistantService
             'max_tokens' => $options['max_tokens'] ?? ($defaults['max_tokens'] ?? null),
             'system' => $options['system'] ?? null,
 
-            // Response shaping
             'response_format' => $options['response_format'] ?? ($defaults['response_format'] ?? null),
 
             'cache_enabled' => (bool) ($options['cache_enabled'] ?? config('assistant.cache.enabled', true)),
@@ -165,11 +183,9 @@ final class AssistantService
             'retries' => (int) ($options['retries'] ?? config('assistant.retries.count', 2)),
             'retry_base_delay_ms' => (int) ($options['retry_base_delay_ms'] ?? config('assistant.retries.base_delay_ms', 250)),
 
-            // Tool/function calling (OpenAI-compatible). Kept internal.
             'tools' => $options['tools'] ?? null,
             'tool_choice' => $options['tool_choice'] ?? ($defaults['tool_choice'] ?? null),
 
-            // JSON helpers
             'json_fix_attempts' => (int) ($options['json_fix_attempts'] ?? config('assistant.json.fix_attempts', 2)),
         ];
     }
@@ -208,6 +224,18 @@ final class AssistantService
      */
     private function withCachingAndRetries(string $kind, string $cacheKey, int $ttlSeconds, bool $enabled, callable $fn)
     {
+        $cacheSampleRate = (float) config('assistant.cache.sample_rate', 1.0);
+        $shouldCache = $enabled && $cacheSampleRate > 0 && (mt_rand() / mt_getrandmax()) <= $cacheSampleRate;
+
+        if ($shouldCache) {
+            $cached = Cache::get($cacheKey);
+            if ($cached !== null) {
+                $this->log('assistant.cache_hit', ['kind' => $kind]);
+                return $cached;
+            }
+            $this->log('assistant.cache_miss', ['kind' => $kind]);
+        }
+
         $runner = function () use ($kind, $fn) {
             $t0 = microtime(true);
             try {
@@ -220,23 +248,13 @@ final class AssistantService
             }
         };
 
-        $cacheSampleRate = (float) config('assistant.cache.sample_rate', 1.0);
-        $shouldCache = $enabled && $cacheSampleRate > 0 && (mt_rand() / mt_getrandmax()) <= $cacheSampleRate;
+        $value = $this->withRetries($runner);
 
         if ($shouldCache) {
-            $cached = Cache::get($cacheKey);
-            if ($cached !== null) {
-                $this->log('assistant.cache_hit', ['kind' => $kind]);
-                return $cached;
-            }
-
-            $this->log('assistant.cache_miss', ['kind' => $kind]);
-            $value = $this->withRetries($runner);
             Cache::put($cacheKey, $value, $ttlSeconds);
-            return $value;
         }
 
-        return $this->withRetries($runner);
+        return $value;
     }
 
     /**
@@ -267,6 +285,7 @@ final class AssistantService
                 if ($jitterMs > 0) {
                     $sleepMs += random_int(0, $jitterMs);
                 }
+
                 $attempt++;
                 $this->log('assistant.retry', ['attempt' => $attempt, 'sleep_ms' => $sleepMs]);
                 usleep($sleepMs * 1000);
@@ -275,6 +294,195 @@ final class AssistantService
     }
 
     private function isRetryable(\Throwable $e): bool
+    {
+        $retryOnConnection = (bool) config('assistant.retries.retry_on_connection_errors', true);
+        $retryOnStatus = (array) config('assistant.retries.retry_on_status', [429, 500, 502, 503, 504]);
+
+        $cur = $e;
+        while ($cur !== null) {
+            if ($cur instanceof RequestException) {
+                $status = $cur->response?->status();
+                if (is_int($status)) {
+                    return in_array($status, $retryOnStatus, true);
+                }
+                return $retryOnConnection;
+            }
+            $cur = $cur->getPrevious();
+        }
+
+        return false;
+    }
+
+    private function enforceRateLimit(): void
+    {
+        $cfg = (array) config('assistant.rate_limit', []);
+        if (!(bool) ($cfg['enabled'] ?? false)) {
+            return;
+        }
+
+        $max = (int) ($cfg['max_per_minute'] ?? 60);
+        if ($max <= 0) {
+            return;
+        }
+
+        $keyPrefix = (string) config('assistant.cache.key_prefix', 'assistant:');
+        $keyPrefix = rtrim($keyPrefix, ':') . ':';
+        $bucket = now()->format('YmdHi');
+        $key = $keyPrefix . 'rl:' . $bucket;
+
+        $count = (int) Cache::increment($key);
+        if ($count === 1) {
+            Cache::put($key, 1, now()->addSeconds(70));
+        }
+
+        if ($count > $max) {
+            throw new \RuntimeException('Assistant temporarily unavailable.');
+        }
+    }
+
+    private function guardCircuitBreaker(): void
+    {
+        $cfg = (array) config('assistant.circuit_breaker', []);
+        if (!(bool) ($cfg['enabled'] ?? false)) {
+            return;
+        }
+
+        $keyPrefix = (string) config('assistant.cache.key_prefix', 'assistant:');
+        $keyPrefix = rtrim($keyPrefix, ':') . ':';
+        $openUntilKey = $keyPrefix . 'cb:open_until';
+
+        $openUntil = Cache::get($openUntilKey);
+        if (!is_string($openUntil) || $openUntil === '') {
+            return;
+        }
+
+        try {
+            if (now()->lt(Carbon::parse($openUntil))) {
+                throw new \RuntimeException('Assistant temporarily unavailable.');
+            }
+        } catch (\Throwable) {
+            // If the stored timestamp is malformed, just ignore it.
+            Cache::forget($openUntilKey);
+        }
+    }
+
+    private function recordCircuitBreakerFailure(\Throwable $e): void
+    {
+        $cfg = (array) config('assistant.circuit_breaker', []);
+        if (!(bool) ($cfg['enabled'] ?? false)) {
+            return;
+        }
+
+        $threshold = (int) ($cfg['failure_threshold'] ?? 10);
+        $cooldownSeconds = (int) ($cfg['cooldown_seconds'] ?? 60);
+        if ($threshold <= 0 || $cooldownSeconds <= 0) {
+            return;
+        }
+
+        $keyPrefix = (string) config('assistant.cache.key_prefix', 'assistant:');
+        $keyPrefix = rtrim($keyPrefix, ':') . ':';
+        $failKey = $keyPrefix . 'cb:failures';
+        $openUntilKey = $keyPrefix . 'cb:open_until';
+
+        $fails = (int) Cache::increment($failKey);
+        if ($fails === 1) {
+            Cache::put($failKey, 1, now()->addSeconds($cooldownSeconds * 2));
+        }
+
+        if ($fails >= $threshold) {
+            Cache::put(
+                $openUntilKey,
+                now()->addSeconds($cooldownSeconds)->toIso8601String(),
+                now()->addSeconds($cooldownSeconds + 10),
+            );
+            $this->log('assistant.circuit_opened', ['fails' => $fails]);
+        }
+    }
+
+    private function recordCircuitBreakerSuccess(): void
+    {
+        $cfg = (array) config('assistant.circuit_breaker', []);
+        if (!(bool) ($cfg['enabled'] ?? false)) {
+            return;
+        }
+
+        $keyPrefix = (string) config('assistant.cache.key_prefix', 'assistant:');
+        $keyPrefix = rtrim($keyPrefix, ':') . ':';
+        Cache::forget($keyPrefix . 'cb:failures');
+        Cache::forget($keyPrefix . 'cb:open_until');
+    }
+
+    /**
+     * @param array<string, mixed> $context
+     */
+    private function log(string $event, array $context = []): void
+    {
+        $cfg = (array) config('assistant.logging', []);
+        if (!(bool) ($cfg['enabled'] ?? true)) {
+            return;
+        }
+
+        $level = (string) ($cfg['level'] ?? 'debug');
+        $safe = $this->redact($context);
+
+        if (!method_exists(Log::class, $level)) {
+            $level = 'debug';
+        }
+
+        Log::$level($event, $safe);
+    }
+
+    /**
+     * @param mixed $value
+     * @return mixed
+     */
+    private function redact(mixed $value): mixed
+    {
+        $cfg = (array) config('assistant.logging', []);
+        $redactKeys = array_map(fn ($x) => Str::lower((string) $x), (array) ($cfg['redact_keys'] ?? []));
+
+        if (is_array($value)) {
+            $out = [];
+            foreach ($value as $k => $v) {
+                if (is_string($k) && in_array(Str::lower($k), $redactKeys, true)) {
+                    $out[$k] = '[redacted]';
+                    continue;
+                }
+                $out[$k] = $this->redact($v);
+            }
+            return $out;
+        }
+
+        return $value;
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    private function decodeJsonBestEffort(string $raw): ?array
+    {
+        $raw = trim($raw);
+
+        // If model accidentally wrapped text, try to extract the first JSON object.
+        $start = strpos($raw, '{');
+        $end = strrpos($raw, '}');
+        if ($start !== false && $end !== false && $end > $start) {
+            $raw = substr($raw, $start, $end - $start + 1);
+        }
+
+        try {
+            /** @var mixed */
+            $decoded = json_decode($raw, true, 512, JSON_THROW_ON_ERROR);
+            if (is_array($decoded)) {
+                return $decoded;
+            }
+        } catch (\Throwable) {
+            // ignore
+        }
+
+        return null;
+    }
+}
     {
         $retryOnConnection = (bool) config('assistant.retries.retry_on_connection_errors', true);
         $retryOnStatus = (array) config('assistant.retries.retry_on_status', [429, 500, 502, 503, 504]);
