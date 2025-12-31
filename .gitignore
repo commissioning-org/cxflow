@@ -12,6 +12,9 @@ src/storage/*.key
 src/storage/logs/
 src/storage/app/ml/
 
+# Supabase connector env (contains secrets)
+src/database/storage.env
+
 # IDE
 .vscode/
 

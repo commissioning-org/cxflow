@@ -120,6 +120,15 @@ By default, the client enforces a single configured model (defaults to `grok-3`)
 - Frontend tooling: `bin/npm install` or `bin/vite`
 - Stop containers: `bin/down`
 
+## Lint + smoke tests
+
+- Lint (fast, secretless): `bin/lint`
+- Tests (lint + optional Docker smoke test): `bin/test`
+
+By default `bin/test` only runs `bin/lint`. To run a lightweight end-to-end smoke test (starts containers and hits health endpoints):
+
+- `SMOKE_DOCKER=1 bin/test`
+
 ## AutoML service (internal)
 
 This repo includes an internal Python service in `./ml` that can:
@@ -168,6 +177,15 @@ If you keep the `scheduler` service running, the installer also appends schedule
 
 - This is intended for **local development**.
 - For production, you’d typically use a separate deploy setup (real secrets management, TLS, backups, etc.).
+
+## Security note (important)
+
+If you use `src/database/storage.env` for Power Platform / Supabase connector work, treat it as **secret material**.
+
+- `src/database/storage.env` is ignored by git.
+- Use `src/database/storage.env.example` as a template.
+
+If real keys were ever committed in git history, rotate them and consider rewriting history (e.g., via `git filter-repo`) to fully purge them.
 
 ## Dependabot automation (enhanced)
 

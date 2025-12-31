@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+say() { printf "%s\n" "$*"; }
+
+die() {
+  say "ERROR: $*" >&2
+  exit 1
+}
+
+# Always run lint first.
+if [ -f "bin/lint" ]; then
+  bash bin/lint
+else
+  die "bin/lint not found (expected in this repo)"
+fi
+
+# Optional smoke test (Docker-based). Off by default so CI stays fast and stable.
+SMOKE_DOCKER="${SMOKE_DOCKER:-0}"
+
+if [ "$SMOKE_DOCKER" != "1" ]; then
+  say ""
+  say "Smoke tests skipped. To enable: SMOKE_DOCKER=1 bin/test"
+  exit 0
+fi
+
+command -v docker >/dev/null 2>&1 || die "docker is required for SMOKE_DOCKER=1"
+
+say ""
+say "==> Smoke: docker compose config"
+docker compose config >/dev/null
+
+say "==> Smoke: build and start minimal services"
+# Start only what's safe/lightweight; avoid MSSQL in CI by default.
+# App depends_on mssql/redis/mail; those are lightweight except mssql.
+# We start db, redis, mail, ml first, then app.
+docker compose up -d --build db redis mail ml
+
+docker compose up -d --build app
+
+# Quick health checks.
+# - Laravel app may not be initialized in ./src in some environments; so we only check
+#   that Apache responds at least with *something*.
+# - ML service has /health.
+APP_PORT="${APP_PORT:-8080}"
+ML_PORT="${ML_PORT:-8090}"
+
+say "==> Smoke: HTTP checks"
+if command -v curl >/dev/null 2>&1; then
+  # App: any HTTP response is acceptable (200/302/404/etc) as long as it answers.
+  code=$(curl -sS -o /dev/null -w "%{http_code}" "http://localhost:${APP_PORT}/" || true)
+  if [ -z "$code" ] || [ "$code" = "000" ]; then
+    die "App did not respond on http://localhost:${APP_PORT}/"
+  fi
+  say "App responded with HTTP ${code}"
+
+  ml=$(curl -sS "http://localhost:${ML_PORT}/health" || true)
+  case "$ml" in
+    *'"ok"'* )
+      say "ML /health looks OK"
+      ;;
+    * )
+      die "ML /health did not return expected payload"
+      ;;
+  esac
+else
+  say "curl not available; skipping HTTP checks"
+fi
+
+say ""
+say "Smoke OK"
