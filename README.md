@@ -138,6 +138,32 @@ Install into `src/` (after Laravel exists):
 
 - `bin/integrate-automl`
 
+## ML automation (applied ML, fully automated)
+
+This repo also includes an **internal ML automation pipeline** that can run unattended:
+
+1. Ingest dataset from a file path or HTTP JSON endpoint
+2. Train via the internal AutoML microservice
+3. Store a run artifact under `storage/app/ml/runs/*.json`
+4. (Optional) emit webhook events for Power Automate
+5. (Optional) generate an internal “model card” summary using the internal assistant layer
+
+Install into `src/`:
+
+- `bin/integrate-mlops`
+
+After install, enable in `src/.env` (or repo root `.env` passed through Docker):
+
+- `ML_AUTOMATION_ENABLED=true`
+- `ML_AUTOMATION_SOURCE=/path/to/data.csv` (or `https://.../data.json`)
+- `ML_AUTOMATION_TARGET=your_target_column` (optional; will be guessed if empty)
+
+Run manually:
+
+- `php artisan ml:automate --sync`
+
+If you keep the `scheduler` service running, the installer also appends schedule hooks to `routes/console.php`.
+
 ## Notes
 
 - This is intended for **local development**.

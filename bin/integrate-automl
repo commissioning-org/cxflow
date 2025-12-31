@@ -43,10 +43,10 @@ ENV
     cat >> "$laravel_env_example" <<'ENV'
 
 # AutoML webhook (optional)
-AUTOML_WEBHOOK_ENABLED=true
-AUTOML_WEBHOOK_URL=https://3eeeffe7fbb2ec6eac086222fffec8.14.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/d304bf81a8ff4e6f82812f4976b20cbc/triggers/manual/paths/invoke?api-version=1&sp=%2Ftriggers%2Fmanual%2Frun&sv=1.0&sig=apljVzAaFo2xQq4j_nAVOhItiLxLQkcGzVGPBJcPe18
-AUTOML_WEBHOOK_TIMEOUT_SECONDS=3600
-AUTOML_WEBHOOK_INCLUDE_ROWS=true
+AUTOML_WEBHOOK_ENABLED=false
+AUTOML_WEBHOOK_URL=
+AUTOML_WEBHOOK_TIMEOUT_SECONDS=15
+AUTOML_WEBHOOK_INCLUDE_ROWS=false
 ENV
   fi
 fi

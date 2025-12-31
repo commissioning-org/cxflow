@@ -1,0 +1,180 @@
+swagger: "2.0"
+info:
+  title: "Supabase File API"
+  description: "Power Automate connector for Supabase uploads and file ops."
+  version: "1.0.0"
+
+# Supabase project host (HTTPS only)
+host: "hilwwknaiejtoatchzqo.supabase.co"
+basePath: "/"
+schemes:
+  - https
+
+consumes:
+  - application/json
+produces:
+  - application/json
+
+x-connector-metadata:
+  s3Endpoint: "https://hilwwknaiejtoatchzqo.storage.supabase.co/storage/v1/s3"
+
+securityDefinitions:
+  SupabaseServiceRole:
+    type: apiKey
+    in: header
+    name: "Authorization"     # Use "Bearer <SERVICE_ROLE_KEY>"
+    description: "Set to: Bearer ${connectionParameters.serviceRoleKey}"
+  SupabaseApiSecret:
+    type: apiKey
+    in: header
+    name: "x-sb-secret"
+    description: "Custom header for API secret: ${connectionParameters.apiSecret}"
+  SupabaseAccessKey:
+    type: apiKey
+    in: header
+    name: "x-sb-access-key"
+    description: "Custom header for access key: ${connectionParameters.accessKey}"
+
+# Default security for all operations (you can override per-operation)
+security:
+  - SupabaseServiceRole: []
+    SupabaseApiSecret: []
+    SupabaseAccessKey: []
+
+# Power Platform-specific connection parameters (kept secure by the platform)
+x-ms-connector-metadata:
+  categories:
+    - file
+  connectionParameters:
+    serviceRoleKey:
+      type: securestring
+      uiDefinition:
+        displayName: "Supabase Service Role Key"
+        description: "Your Supabase service role key (kept secure)."
+        tooltip: "Enter the service role key starting with sb-"
+        constraints:
+          required: true
+    apiSecret:
+      type: securestring
+      uiDefinition:
+        displayName: "Supabase API Secret"
+        description: "Custom API secret if required by your Edge Function or API."
+        constraints:
+          required: false
+    accessKey:
+      type: securestring
+      uiDefinition:
+        displayName: "Supabase Access Key"
+        description: "Used by your API to authorize S3-compatible access if applicable."
+        constraints:
+          required: false
+    databasePassword:
+      type: securestring
+      uiDefinition:
+        displayName: "Database Password"
+        description: "Only if your API endpoint requires it (not recommended)."
+        constraints:
+          required: false
+
+paths:
+  /functions/v1/upload:
+    post:
+      summary: "Upload a file to Supabase Storage"
+      description: "Proxy to an Edge Function or API that writes to Storage."
+      operationId: "uploadFile"
+      consumes:
+        - multipart/form-data
+      parameters:
+        - name: "file"
+          in: "formData"
+          type: "file"
+          required: true
+          description: "File to upload."
+        - name: "bucket"
+          in: "query"
+          type: "string"
+          required: true
+          description: "Target Storage bucket."
+        - name: "path"
+          in: "query"
+          type: "string"
+          required: true
+          description: "File path within the bucket."
+        - name: "contentType"
+          in: "query"
+          type: "string"
+          required: false
+          description: "Content-Type for the uploaded file."
+        - name: "upsert"
+          in: "query"
+          type: "boolean"
+          default: false
+          description: "Overwrite if the file exists."
+      responses:
+        "200":
+          description: "Upload successful"
+          schema:
+            type: object
+            properties:
+              key:
+                type: string
+                example: "public/reports/2025/q1.pdf"
+              bucket:
+                type: string
+              path:
+                type: string
+              contentType:
+                type: string
+              size:
+                type: integer
+                format: int64
+        "400":
+          description: "Bad request"
+        "401":
+          description: "Unauthorized"
+        "403":
+          description: "Forbidden"
+        "413":
+          description: "Payload too large"
+
+  /functions/v1/signed-url:
+    get:
+      summary: "Generate signed download URL"
+      description: "Returns a temporary signed URL for a file in Storage."
+      operationId: "getSignedUrl"
+      parameters:
+        - name: "bucket"
+          in: "query"
+          type: "string"
+          required: true
+        - name: "path"
+          in: "query"
+          type: "string"
+          required: true
+        - name: "expiresIn"
+          in: "query"
+          type: "integer"
+          default: 3600
+          description: "Expiry in seconds."
+      responses:
+        "200":
+          description: "Signed URL"
+          schema:
+            type: object
+            properties:
+              signedUrl:
+                type: string
+
+  /health:
+    get:
+      summary: "Health check"
+      operationId: "health"
+      responses:
+        "200":
+          description: "OK"
+          schema:
+            type: object
+            properties:
+              status:
+                type: string
+                example: "ok"

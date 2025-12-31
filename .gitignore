@@ -10,6 +10,7 @@ src/.env
 src/.phpunit.result.cache
 src/storage/*.key
 src/storage/logs/
+src/storage/app/ml/
 
 # IDE
 .vscode/

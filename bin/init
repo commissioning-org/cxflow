@@ -33,6 +33,11 @@ if [ ! -f "src/artisan" ]; then
     bash bin/integrate-automl || true
   fi
 
+  if [ -f "bin/integrate-mlops" ]; then
+    echo "Installing ML automation scaffolding..."
+    bash bin/integrate-mlops || true
+  fi
+
   echo "Setting recommended permissions for storage/ and bootstrap/cache..."
   docker compose exec app bash -lc "chown -R www-data:www-data storage bootstrap/cache || true"
 else
