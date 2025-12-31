@@ -11,6 +11,7 @@ use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 /**
  * Generic automation job.
@@ -39,6 +40,9 @@ final class RunAssistantTask implements ShouldQueue
 
     public function handle(AssistantService $assistant): void
     {
+        $traceId = (string) Str::uuid();
+        $startedAt = now();
+
         $result = match ($this->task) {
             'text' => $assistant->text((string) ($this->payload['prompt'] ?? ''), $this->options),
             'json' => $assistant->json((string) ($this->payload['prompt'] ?? ''), $this->options),
@@ -47,8 +51,12 @@ final class RunAssistantTask implements ShouldQueue
 
         Cache::put($this->resultKey, [
             'ok' => true,
+            'trace_id' => $traceId,
+            'task' => $this->task,
+            'started_at' => $startedAt->toIso8601String(),
+            'finished_at' => now()->toIso8601String(),
             'result' => $result,
-        ], now()->addMinutes(10));
+        ], now()->addSeconds((int) config('assistant.cache.ttl_seconds', 600)));
     }
 
     public function failed(\Throwable $e): void
@@ -56,6 +64,6 @@ final class RunAssistantTask implements ShouldQueue
         Cache::put($this->resultKey, [
             'ok' => false,
             'error' => 'Task failed.',
-        ], now()->addMinutes(10));
+        ], now()->addSeconds((int) config('assistant.cache.ttl_seconds', 600)));
     }
 }
