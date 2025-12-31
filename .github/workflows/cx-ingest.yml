@@ -32,13 +32,5 @@ jobs:
           fi
 
           # Run the request. The URL contains a signature; do not echo it.
-          php ingestion/php_cx_request.php "$CX_INGESTION_URI" \
-            | python - <<'PY'
-import re,sys
-text=sys.stdin.read()
-# Redact common signed query parameters if they appear in output.
-text=re.sub(r"sig=[^&\"\s]+", "sig=<redacted>", text)
-text=re.sub(r"sv=[^&\"\s]+", "sv=<redacted>", text)
-text=re.sub(r"sp=[^&\"\s]+", "sp=<redacted>", text)
-print(text)
-PY
+          php ingestion/php_cx_request.php "$CX_INGESTION_URI" |
+            python -c 'import re,sys; t=sys.stdin.read(); t=re.sub(r"sig=[^&\"\\s]+","sig=<redacted>",t); t=re.sub(r"sv=[^&\"\\s]+","sv=<redacted>",t); t=re.sub(r"sp=[^&\"\\s]+","sp=<redacted>",t); print(t)'
