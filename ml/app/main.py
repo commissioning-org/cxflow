@@ -727,93 +727,533 @@ def _run_training(
     return meta
 
 
+# ---------------------------------------------------------------------------
+# API Endpoints
+# ---------------------------------------------------------------------------
+
+
 @app.get("/health")
 def health():
-    return {"ok": True}
+    """Health check endpoint."""
+    return {
+        "ok": True,
+        "version": "2.0",
+        "models_dir": str(MODELS_DIR),
+        "model_count": len(list(MODELS_DIR.glob("*.joblib"))),
+    }
+
+
+@app.get("/readiness")
+def readiness():
+    """Readiness probe for Kubernetes."""
+    # Check models directory is accessible
+    try:
+        _ = list(MODELS_DIR.iterdir())
+        return {"ready": True}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
 
 
 @app.post("/train", response_model=TrainResponse)
 def train(req: TrainRequest):
-    df = pd.DataFrame(req.rows)
-    if req.target not in df.columns:
-        raise ValueError(f"target '{req.target}' not found in input columns")
+    """
+    Train a model synchronously.
+    
+    For large datasets, consider using /train/async instead.
+    """
+    try:
+        df = pd.DataFrame(req.rows)
+        result = _run_training(
+            df=df,
+            target=req.target,
+            problem=req.problem,
+            metric=req.metric,
+            test_size=req.test_size,
+            random_state=req.random_state,
+            enable_cv=req.enable_cv,
+            enable_tuning=req.enable_tuning,
+            model_name=req.model_name,
+            tags=req.tags,
+        )
 
-    y = df[req.target]
-    X = df.drop(columns=[req.target])
+        return TrainResponse(
+            model_id=result["model_id"],
+            model_name=result.get("model_name"),
+            problem=result["problem"],
+            metric=result["metric"],
+            score=result["score"],
+            cv_score=result.get("cv_score"),
+            cv_std=result.get("cv_std"),
+            selected_model=result["selected"],
+            features=result["features"],
+            training_time_sec=result["training_time_sec"],
+            row_count=result["row_count"],
+            created_at=result["created_at"],
+            tags=result.get("tags", []),
+        )
 
-    problem = req.problem or _infer_problem(y)
-    metric = req.metric or _default_metric(problem)
+    except ValueError as e:
+        logger.error(f"Training validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.exception("Training failed")
+        raise HTTPException(status_code=500, detail=str(e))
 
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=req.test_size, random_state=req.random_state
+
+@app.post("/train/async", response_model=AsyncTrainResponse)
+async def train_async(req: TrainRequest, background_tasks: BackgroundTasks):
+    """
+    Start an asynchronous training job.
+    
+    Returns immediately with a job_id. Use /train/status/{job_id} to poll.
+    """
+    job_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
+
+    _training_jobs[job_id] = {
+        "status": JobStatus.PENDING.value,
+        "model_id": None,
+        "error": None,
+        "progress": 0.0,
+        "created_at": created_at,
+        "completed_at": None,
+    }
+
+    def _run_async():
+        try:
+            _training_jobs[job_id]["status"] = JobStatus.RUNNING.value
+            df = pd.DataFrame(req.rows)
+            result = _run_training(
+                df=df,
+                target=req.target,
+                problem=req.problem,
+                metric=req.metric,
+                test_size=req.test_size,
+                random_state=req.random_state,
+                enable_cv=req.enable_cv,
+                enable_tuning=req.enable_tuning,
+                model_name=req.model_name,
+                tags=req.tags,
+                job_id=job_id,
+            )
+            _training_jobs[job_id]["status"] = JobStatus.COMPLETED.value
+            _training_jobs[job_id]["model_id"] = result["model_id"]
+            _training_jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+        except Exception as e:
+            logger.exception(f"Async training job {job_id} failed")
+            _training_jobs[job_id]["status"] = JobStatus.FAILED.value
+            _training_jobs[job_id]["error"] = str(e)
+            _training_jobs[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+    background_tasks.add_task(_run_async)
+
+    return AsyncTrainResponse(
+        job_id=job_id,
+        status=JobStatus.PENDING.value,
+        message="Training job started. Poll /train/status/{job_id} for updates.",
     )
 
-    preprocess = _build_preprocess(X_train)
 
-    best_name = None
-    best_model = None
-    best_score = None
+@app.get("/train/status/{job_id}", response_model=JobStatusResponse)
+def train_status(job_id: str):
+    """Get the status of an async training job."""
+    if job_id not in _training_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
 
-    for name, est in _candidates(problem):
-        pipe = Pipeline(steps=[("preprocess", preprocess), ("model", est)])
-        pipe.fit(X_train, y_train)
-        preds = pipe.predict(X_test)
-
-        s = _score(problem, metric, np.asarray(y_test), np.asarray(preds))
-
-        # For regression: lower is better (rmse). For classification: higher is better.
-        is_better = False
-        if problem == "regression":
-            is_better = best_score is None or s < best_score
-        else:
-            is_better = best_score is None or s > best_score
-
-        if is_better:
-            best_name = name
-            best_model = pipe
-            best_score = s
-
-    assert best_model is not None and best_score is not None
-
-    model_id = str(uuid.uuid4())
-    art = _artifacts(model_id)
-
-    joblib.dump(best_model, art.model_path)
-    meta = {
-        "model_id": model_id,
-        "problem": problem,
-        "metric": metric,
-        "score": best_score,
-        "selected": best_name,
-        "features": list(X.columns),
-    }
-    art.meta_path.write_text(json.dumps(meta, indent=2))
-
-    return TrainResponse(
-        model_id=model_id,
-        problem=problem,
-        metric=metric,
-        score=float(best_score),
-        features=list(X.columns),
+    job = _training_jobs[job_id]
+    return JobStatusResponse(
+        job_id=job_id,
+        status=job["status"],
+        model_id=job.get("model_id"),
+        error=job.get("error"),
+        progress=job.get("progress", 0.0),
+        created_at=job.get("created_at"),
+        completed_at=job.get("completed_at"),
     )
 
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
+    """Make predictions using a trained model."""
+    start_time = time.time()
+
     art = _artifacts(req.model_id)
     if not art.model_path.exists() or not art.meta_path.exists():
-        raise ValueError("model_id not found")
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    try:
+        model = joblib.load(art.model_path)
+        meta = json.loads(art.meta_path.read_text())
+        df = pd.DataFrame(req.rows)
+
+        # Ensure columns match
+        missing = set(meta["features"]) - set(df.columns)
+        if missing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Missing required features: {missing}",
+            )
+
+        # Reorder columns to match training
+        df = df[meta["features"]]
+
+        preds = model.predict(df)
+
+        # Handle label encoding
+        if meta.get("label_encoder"):
+            label_classes = meta["label_encoder"]
+            preds = [label_classes[int(p)] for p in preds]
+
+        # Get probabilities if requested
+        probabilities = None
+        if req.return_probabilities and hasattr(model, "predict_proba"):
+            try:
+                proba = model.predict_proba(df)
+                probabilities = proba.tolist()
+            except Exception:
+                pass
+
+        # Ensure JSON-serializable
+        out: list[Any] = []
+        for p in preds:
+            if isinstance(p, (np.generic,)):
+                out.append(p.item())
+            else:
+                out.append(p)
+
+        inference_time = (time.time() - start_time) * 1000
+
+        return PredictResponse(
+            model_id=req.model_id,
+            predictions=out,
+            probabilities=probabilities,
+            inference_time_ms=inference_time,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Prediction failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/predict/batch")
+async def predict_batch(req: BatchPredictRequest):
+    """
+    Batch prediction with streaming NDJSON response.
+    
+    Returns predictions in batches as newline-delimited JSON.
+    """
+    art = _artifacts(req.model_id)
+    if not art.model_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
 
     model = joblib.load(art.model_path)
+    meta = json.loads(art.meta_path.read_text())
     df = pd.DataFrame(req.rows)
 
-    preds = model.predict(df)
-    # Ensure JSON-serializable
-    out: list[Any] = []
-    for p in preds:
-        if isinstance(p, (np.generic,)):
-            out.append(p.item())
-        else:
-            out.append(p)
+    # Validate features
+    df = df[meta["features"]]
 
-    return PredictResponse(model_id=req.model_id, predictions=out)
+    async def generate():
+        for i in range(0, len(df), req.batch_size):
+            batch = df.iloc[i : i + req.batch_size]
+            preds = model.predict(batch)
+
+            # Handle label encoding
+            if meta.get("label_encoder"):
+                label_classes = meta["label_encoder"]
+                preds = [label_classes[int(p)] for p in preds]
+
+            result = {
+                "batch_start": i,
+                "batch_size": len(batch),
+                "predictions": [p.item() if isinstance(p, np.generic) else p for p in preds],
+            }
+            yield json.dumps(result) + "\n"
+
+    return StreamingResponse(generate(), media_type="application/x-ndjson")
+
+
+@app.get("/models", response_model=ModelListResponse)
+def list_models(
+    tag: str | None = Query(None, description="Filter by tag"),
+    problem: str | None = Query(None, description="Filter by problem type"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0),
+):
+    """List all trained models with optional filtering."""
+    models: list[ModelInfo] = []
+
+    for meta_path in MODELS_DIR.glob("*.json"):
+        if meta_path.name.endswith(".importance.json") or meta_path.name.endswith(".shap.json"):
+            continue
+
+        try:
+            meta = json.loads(meta_path.read_text())
+            model_path = MODELS_DIR / f"{meta_path.stem}.joblib"
+
+            # Apply filters
+            if tag and tag not in meta.get("tags", []):
+                continue
+            if problem and meta.get("problem") != problem:
+                continue
+
+            models.append(
+                ModelInfo(
+                    model_id=meta["model_id"],
+                    model_name=meta.get("model_name"),
+                    problem=meta["problem"],
+                    metric=meta["metric"],
+                    score=meta["score"],
+                    cv_score=meta.get("cv_score"),
+                    selected_model=meta["selected"],
+                    features=meta["features"],
+                    row_count=meta.get("row_count", 0),
+                    created_at=meta.get("created_at", ""),
+                    file_size_bytes=model_path.stat().st_size if model_path.exists() else 0,
+                    tags=meta.get("tags", []),
+                )
+            )
+        except Exception as e:
+            logger.warning(f"Failed to load model metadata: {meta_path}: {e}")
+
+    # Sort by creation date (newest first)
+    models.sort(key=lambda m: m.created_at, reverse=True)
+
+    total = len(models)
+    models = models[offset : offset + limit]
+
+    return ModelListResponse(models=models, total=total)
+
+
+@app.get("/models/{model_id}", response_model=ModelInfo)
+def get_model(model_id: str):
+    """Get details of a specific model."""
+    art = _artifacts(model_id)
+    if not art.meta_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    meta = json.loads(art.meta_path.read_text())
+
+    return ModelInfo(
+        model_id=meta["model_id"],
+        model_name=meta.get("model_name"),
+        problem=meta["problem"],
+        metric=meta["metric"],
+        score=meta["score"],
+        cv_score=meta.get("cv_score"),
+        selected_model=meta["selected"],
+        features=meta["features"],
+        row_count=meta.get("row_count", 0),
+        created_at=meta.get("created_at", ""),
+        file_size_bytes=art.model_path.stat().st_size if art.model_path.exists() else 0,
+        tags=meta.get("tags", []),
+    )
+
+
+@app.delete("/models/{model_id}")
+def delete_model(model_id: str):
+    """Delete a trained model."""
+    art = _artifacts(model_id)
+
+    if not art.meta_path.exists() and not art.model_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    deleted = []
+    for path in [art.model_path, art.meta_path, art.importance_path, art.shap_path]:
+        if path.exists():
+            path.unlink()
+            deleted.append(path.name)
+
+    logger.info(f"Deleted model {model_id}: {deleted}")
+
+    return {"deleted": True, "model_id": model_id, "files": deleted}
+
+
+@app.get("/models/{model_id}/importance", response_model=FeatureImportanceResponse)
+def get_feature_importance(model_id: str):
+    """Get feature importance scores for a model."""
+    art = _artifacts(model_id)
+
+    if not art.meta_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Try cached importance first
+    if art.importance_path.exists():
+        importances = json.loads(art.importance_path.read_text())
+        return FeatureImportanceResponse(
+            model_id=model_id,
+            importances=importances,
+            method="cached",
+        )
+
+    # Compute from model
+    try:
+        model = joblib.load(art.model_path)
+        meta = json.loads(art.meta_path.read_text())
+        importances = _extract_feature_importance(model, meta["features"])
+
+        if importances:
+            art.importance_path.write_text(json.dumps(importances, indent=2))
+
+        return FeatureImportanceResponse(
+            model_id=model_id,
+            importances=importances,
+            method="computed",
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to compute importance: {e}")
+
+
+@app.post("/models/{model_id}/explain", response_model=ExplainResponse)
+def explain_predictions(model_id: str, req: ExplainRequest):
+    """
+    Get SHAP explanations for predictions.
+    
+    Requires SHAP library and ML_ENABLE_SHAP=true.
+    """
+    if not ENABLE_SHAP:
+        raise HTTPException(status_code=400, detail="SHAP explanations disabled")
+
+    art = _artifacts(model_id)
+    if not art.model_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    try:
+        import shap
+    except ImportError:
+        raise HTTPException(status_code=501, detail="SHAP not installed")
+
+    try:
+        model = joblib.load(art.model_path)
+        meta = json.loads(art.meta_path.read_text())
+        df = pd.DataFrame(req.rows)[meta["features"]]
+
+        # Get the underlying model
+        estimator = model.named_steps.get("model")
+        preprocessor = model.named_steps.get("preprocess")
+
+        X_transformed = preprocessor.transform(df)
+
+        # Choose appropriate explainer
+        if hasattr(estimator, "predict_proba"):
+            explainer = shap.TreeExplainer(estimator, feature_perturbation="interventional")
+        else:
+            explainer = shap.Explainer(estimator)
+
+        shap_values = explainer.shap_values(X_transformed)
+
+        # Handle multi-class
+        if isinstance(shap_values, list):
+            shap_values = shap_values[1] if len(shap_values) == 2 else np.mean(shap_values, axis=0)
+
+        # Map back to feature names
+        try:
+            feature_names = list(preprocessor.get_feature_names_out())
+        except Exception:
+            feature_names = meta["features"]
+
+        result_shap: list[dict[str, float]] = []
+        for row_idx in range(len(df)):
+            row_shap = {}
+            for feat_idx, feat_name in enumerate(feature_names[: shap_values.shape[1]]):
+                row_shap[feat_name] = float(shap_values[row_idx, feat_idx])
+            result_shap.append(row_shap)
+
+        return ExplainResponse(
+            model_id=model_id,
+            shap_values=result_shap,
+            base_value=float(explainer.expected_value) if np.isscalar(explainer.expected_value) else float(explainer.expected_value[0]),
+            method="TreeExplainer" if hasattr(estimator, "predict_proba") else "Explainer",
+        )
+
+    except Exception as e:
+        logger.exception("SHAP explanation failed")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/profile", response_model=DataProfileResponse)
+def profile_data(req: DataProfileRequest):
+    """
+    Profile a dataset to understand its structure and statistics.
+    
+    Useful before training to validate data quality.
+    """
+    df = pd.DataFrame(req.rows)
+    columns: list[ColumnProfile] = []
+
+    for col in df.columns:
+        series = df[col]
+        dtype = str(series.dtype)
+        null_count = int(series.isnull().sum())
+        unique_count = int(series.nunique())
+
+        profile = ColumnProfile(
+            name=col,
+            dtype=dtype,
+            null_count=null_count,
+            null_pct=round(null_count / len(df) * 100, 2),
+            unique_count=unique_count,
+            unique_pct=round(unique_count / len(df) * 100, 2),
+            sample_values=series.dropna().head(5).tolist(),
+        )
+
+        if pd.api.types.is_numeric_dtype(series):
+            profile.min = float(series.min()) if not series.isnull().all() else None
+            profile.max = float(series.max()) if not series.isnull().all() else None
+            profile.mean = float(series.mean()) if not series.isnull().all() else None
+            profile.std = float(series.std()) if not series.isnull().all() else None
+            profile.median = float(series.median()) if not series.isnull().all() else None
+        else:
+            mode_val = series.mode()
+            profile.mode = mode_val.iloc[0] if len(mode_val) > 0 else None
+
+        columns.append(profile)
+
+    # Target distribution if specified
+    target_dist = None
+    suggested = None
+    if req.target and req.target in df.columns:
+        target_series = df[req.target]
+        target_dist = target_series.value_counts().head(20).to_dict()
+        target_dist = {str(k): int(v) for k, v in target_dist.items()}
+        suggested = _infer_problem(target_series)
+
+    return DataProfileResponse(
+        row_count=len(df),
+        column_count=len(df.columns),
+        columns=columns,
+        target_distribution=target_dist,
+        suggested_problem=suggested,
+    )
+
+
+@app.get("/metrics")
+def metrics():
+    """Prometheus-style metrics endpoint."""
+    model_count = len(list(MODELS_DIR.glob("*.joblib")))
+    jobs_pending = sum(1 for j in _training_jobs.values() if j["status"] == JobStatus.PENDING.value)
+    jobs_running = sum(1 for j in _training_jobs.values() if j["status"] == JobStatus.RUNNING.value)
+    jobs_completed = sum(1 for j in _training_jobs.values() if j["status"] == JobStatus.COMPLETED.value)
+    jobs_failed = sum(1 for j in _training_jobs.values() if j["status"] == JobStatus.FAILED.value)
+
+    lines = [
+        "# HELP automl_models_total Total number of trained models",
+        "# TYPE automl_models_total gauge",
+        f"automl_models_total {model_count}",
+        "# HELP automl_jobs_pending Pending training jobs",
+        "# TYPE automl_jobs_pending gauge",
+        f"automl_jobs_pending {jobs_pending}",
+        "# HELP automl_jobs_running Running training jobs",
+        "# TYPE automl_jobs_running gauge",
+        f"automl_jobs_running {jobs_running}",
+        "# HELP automl_jobs_completed Completed training jobs",
+        "# TYPE automl_jobs_completed counter",
+        f"automl_jobs_completed {jobs_completed}",
+        "# HELP automl_jobs_failed Failed training jobs",
+        "# TYPE automl_jobs_failed counter",
+        f"automl_jobs_failed {jobs_failed}",
+    ]
+
+    return StreamingResponse(iter(["\n".join(lines) + "\n"]), media_type="text/plain")
