@@ -1,0 +1,49 @@
+name: Dependabot review (assistant)
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Generate assistant review
+        if: secrets.ASSISTANT_API_KEY != '' && secrets.ASSISTANT_BASE_URL != ''
+        uses: ./.github/actions/assistant-dependabot-review
+        with:
+          assistant_api_key: ${{ secrets.ASSISTANT_API_KEY }}
+          assistant_base_url: ${{ secrets.ASSISTANT_BASE_URL }}
+          assistant_model: ${{ secrets.ASSISTANT_MODEL }}
+          pr_number: ${{ github.event.pull_request.number }}
+          base_sha: ${{ github.event.pull_request.base.sha }}
+          head_sha: ${{ github.event.pull_request.head.sha }}
+
+      - name: Comment on PR
+        if: secrets.ASSISTANT_API_KEY != '' && secrets.ASSISTANT_BASE_URL != ''
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const body = fs.readFileSync('review_comment.md', 'utf8');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body
+            });
+
+      - name: Skip notice (secrets missing)
+        if: secrets.ASSISTANT_API_KEY == '' || secrets.ASSISTANT_BASE_URL == ''
+        run: |
+          echo "ASSISTANT_API_KEY and/or ASSISTANT_BASE_URL secrets are not configured; skipping assistant review."

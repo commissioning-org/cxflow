@@ -1,0 +1,42 @@
+name: "Lint stubs"
+description: "Lightweight repo checks (no secrets)"
+runs:
+  using: "composite"
+  steps:
+    - name: Bash syntax check
+      shell: bash
+      run: |
+        set -euo pipefail
+        if compgen -G "bin/*" > /dev/null; then
+          for f in bin/*; do
+            if [ -f "$f" ]; then
+              bash -n "$f"
+            fi
+          done
+        fi
+
+    - name: Docker Compose config check
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v docker >/dev/null 2>&1; then
+          docker compose config >/dev/null
+        else
+          echo "docker not available on runner; skipping compose config check"
+        fi
+
+    - name: Python syntax check (ML service)
+      shell: bash
+      run: |
+        set -euo pipefail
+        python -m compileall -q ml/app
+
+    - name: PHP syntax check (stubs)
+      shell: bash
+      run: |
+        set -euo pipefail
+        if compgen -G ".stubs/**/*.php" > /dev/null; then
+          find .stubs -type f -name "*.php" -print0 | xargs -0 -n 1 php -l >/dev/null
+        else
+          echo "No PHP stub files found"
+        fi
