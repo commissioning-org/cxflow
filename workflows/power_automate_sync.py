@@ -21,7 +21,6 @@ import gzip
 import base64
 
 import requests
-from pydantic import BaseModel, Field
 
 # Optional async support
 try:
@@ -30,6 +29,15 @@ try:
 except ImportError:
     HAS_AIOHTTP = False
     aiohttp = None
+
+# Optional pydantic support - fall back to dataclass
+try:
+    from pydantic import BaseModel, Field
+    HAS_PYDANTIC = True
+except ImportError:
+    HAS_PYDANTIC = False
+    BaseModel = None
+    Field = None
 
 logger = logging.getLogger(__name__)
 
@@ -141,28 +149,61 @@ class SyncResult:
     response_data: Optional[Dict[str, Any]] = None
 
 
-class SyncPayload(BaseModel):
-    """Complete sync payload to Power Automate."""
-    sync_id: str
-    sync_type: str
-    source: str = "cxflow"
-    environment: str = Field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
-    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
-    
-    # Data sections
-    memory: Optional[List[Dict[str, Any]]] = None
-    macros: Optional[List[Dict[str, Any]]] = None
-    metadata: Optional[List[Dict[str, Any]]] = None
-    data: Optional[Dict[str, Any]] = None
-    config: Optional[Dict[str, Any]] = None
-    logs: Optional[List[Dict[str, Any]]] = None
-    metrics: Optional[Dict[str, Any]] = None
-    events: Optional[List[Dict[str, Any]]] = None
-    
-    # Sync metadata
-    checksum: Optional[str] = None
-    compressed: bool = False
-    batch_info: Optional[Dict[str, Any]] = None
+# SyncPayload - use pydantic if available, otherwise dataclass
+if HAS_PYDANTIC:
+    class SyncPayload(BaseModel):
+        """Complete sync payload to Power Automate."""
+        sync_id: str
+        sync_type: str
+        source: str = "cxflow"
+        environment: str = Field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
+        timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+        
+        # Data sections
+        memory: Optional[List[Dict[str, Any]]] = None
+        macros: Optional[List[Dict[str, Any]]] = None
+        metadata: Optional[List[Dict[str, Any]]] = None
+        data: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None
+        logs: Optional[List[Dict[str, Any]]] = None
+        metrics: Optional[Dict[str, Any]] = None
+        events: Optional[List[Dict[str, Any]]] = None
+        
+        # Sync metadata
+        checksum: Optional[str] = None
+        compressed: bool = False
+        batch_info: Optional[Dict[str, Any]] = None
+else:
+    @dataclass
+    class SyncPayload:
+        """Complete sync payload to Power Automate."""
+        sync_id: str
+        sync_type: str
+        source: str = "cxflow"
+        environment: str = field(default_factory=lambda: os.getenv("ENVIRONMENT", "development"))
+        timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+        
+        # Data sections
+        memory: Optional[List[Dict[str, Any]]] = None
+        macros: Optional[List[Dict[str, Any]]] = None
+        metadata: Optional[List[Dict[str, Any]]] = None
+        data: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None
+        logs: Optional[List[Dict[str, Any]]] = None
+        metrics: Optional[Dict[str, Any]] = None
+        events: Optional[List[Dict[str, Any]]] = None
+        
+        # Sync metadata
+        checksum: Optional[str] = None
+        compressed: bool = False
+        batch_info: Optional[Dict[str, Any]] = None
+        
+        def model_dump(self, exclude_none: bool = False) -> Dict[str, Any]:
+            """Compatibility method for pydantic-like behavior."""
+            result = asdict(self)
+            if exclude_none:
+                result = {k: v for k, v in result.items() if v is not None}
+            return result
 
 
 # ============================================================================

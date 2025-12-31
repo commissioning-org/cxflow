@@ -1,0 +1,31 @@
+[
+  {
+    "type": "sync_initiated",
+    "data": {
+      "source": "execute_sync.py",
+      "full_sync": true
+    },
+    "source": "cxflow",
+    "timestamp": "2025-12-31T19:45:45.610877+00:00"
+  },
+  {
+    "type": "data_collected",
+    "data": {
+      "memory_count": 5,
+      "macro_count": 4
+    },
+    "source": "cxflow",
+    "timestamp": "2025-12-31T19:45:45.611096+00:00"
+  },
+  {
+    "type": "sync_completed",
+    "data": {
+      "sync_id": "2c3d9cd638d50cbd",
+      "status": "completed",
+      "items_sent": 16,
+      "duration_ms": 434
+    },
+    "source": "cxflow",
+    "timestamp": "2025-12-31T19:45:46.160774+00:00"
+  }
+]
