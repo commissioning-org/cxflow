@@ -797,9 +797,9 @@ class MacroExecutionEngine:
         """
         condition = self._resolve_variables(action.get("if", ""), context)
         
-        # Evaluate condition
+        # Evaluate condition safely
         try:
-            result = eval(condition) if isinstance(condition, str) else bool(condition)
+            result = self._safe_eval_condition(condition) if isinstance(condition, str) else bool(condition)
         except:
             result = False
         
@@ -812,6 +812,58 @@ class MacroExecutionEngine:
             branch_results.append(action_result)
         
         return {"success": True, "condition_result": result, "branch_results": branch_results}
+    
+    def _safe_eval_condition(self, condition: str) -> bool:
+        """
+        Safely evaluate a condition without using eval().
+        
+        Supports basic comparisons like:
+        - "value > 10"
+        - "status == 'active'"
+        - "count <= 5"
+        - "name != 'test'"
+        """
+        import operator
+        
+        # Define safe operators (order matters - check longer operators first)
+        ops = [
+            ('>=', operator.ge),
+            ('<=', operator.le),
+            ('==', operator.eq),
+            ('!=', operator.ne),
+            ('>', operator.gt),
+            ('<', operator.lt),
+        ]
+        
+        # Try to parse simple comparison
+        for op_str, op_func in ops:
+            if op_str in condition:
+                parts = condition.split(op_str, 1)
+                if len(parts) == 2:
+                    left = parts[0].strip()
+                    right = parts[1].strip()
+                    
+                    # Try to convert to appropriate types
+                    try:
+                        # Try as number
+                        left_val = float(left)
+                        right_val = float(right)
+                        return op_func(left_val, right_val)
+                    except ValueError:
+                        # Try as string (remove quotes if present)
+                        left_val = left.strip("'\"")
+                        right_val = right.strip("'\"")
+                        return op_func(left_val, right_val)
+        
+        # For simple boolean values
+        if condition.lower() in ('true', '1', 'yes'):
+            return True
+        if condition.lower() in ('false', '0', 'no', ''):
+            return False
+        
+        # Default to False for safety
+        logger.warning(f"Could not safely evaluate condition: {condition}")
+        return False
     
     def _handle_loop(self, action: Dict, context: Dict) -> Dict:
         """
