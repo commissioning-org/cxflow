@@ -1,0 +1,44 @@
+name: CX ingestion (scheduled)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Daily at 04:05 UTC
+    - cron: "5 4 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          tools: none
+
+      - name: Run ingestion GET request
+        env:
+          CX_INGESTION_URI: ${{ secrets.CX_INGESTION_URI }}
+        run: |
+          set -euo pipefail
+          if [ -z "${CX_INGESTION_URI:-}" ]; then
+            echo "Missing secret CX_INGESTION_URI; skipping."
+            exit 0
+          fi
+
+          # Run the request. The URL contains a signature; do not echo it.
+          php ingestion/php_cx_request.php "$CX_INGESTION_URI" \
+            | python - <<'PY'
+import re,sys
+text=sys.stdin.read()
+# Redact common signed query parameters if they appear in output.
+text=re.sub(r"sig=[^&\"\s]+", "sig=<redacted>", text)
+text=re.sub(r"sv=[^&\"\s]+", "sv=<redacted>", text)
+text=re.sub(r"sp=[^&\"\s]+", "sp=<redacted>", text)
+print(text)
+PY
