@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/schemas/ml_ingestion_source.schema.json",
+  "title": "ML Ingestion Source Payload",
+  "description": "Valid shapes accepted by DatasetLoader when ingesting from JSON (HTTP or local .json file).",
+  "oneOf": [
+    {
+      "title": "Bare rows array",
+      "type": "array",
+      "items": { "$ref": "#/$defs/rowObject" }
+    },
+    {
+      "title": "Object with rows[]",
+      "type": "object",
+      "required": ["rows"],
+      "additionalProperties": true,
+      "properties": {
+        "rows": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/rowObject" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "rowObject": {
+      "type": "object",
+      "description": "One row of tabular data. Keys are column names; values may be string/number/boolean/null/object/array.",
+      "additionalProperties": true
+    }
+  }
+}

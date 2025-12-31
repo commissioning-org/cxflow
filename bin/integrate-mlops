@@ -35,6 +35,7 @@ copy_stub "app/Console/Commands/MlMonitor.php"
 
 # Schemas (for Power Automate / external validation)
 copy_stub "resources/schemas/ml_ingestion_event.schema.json"
+copy_stub "resources/schemas/ml_ingestion_source.schema.json"
 
 # Optional DB persistence (migrations + models)
 copy_stub "app/Models/MlDataset.php"
