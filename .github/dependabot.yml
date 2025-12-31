@@ -4,25 +4,85 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "03:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "deps(actions)"
+      include: "scope"
     open-pull-requests-limit: 10
+    groups:
+      actions-patch-minor:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      actions-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
 
   # Python dependencies for the internal ML service
   - package-ecosystem: "pip"
     directory: "/ml"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "03:15"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps(pip)"
+      include: "scope"
     open-pull-requests-limit: 10
+    groups:
+      pip-patch-minor:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      pip-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
 
   # Docker base images
   - package-ecosystem: "docker"
     directory: "/ml"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "03:30"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
     open-pull-requests-limit: 10
+    groups:
+      docker-ml:
+        patterns:
+          - "*"
 
   - package-ecosystem: "docker"
     directory: "/.docker/php"
     schedule:
-      interval: "weekly"
+      interval: "daily"
+      time: "03:45"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "deps(docker)"
+      include: "scope"
     open-pull-requests-limit: 10
+    groups:
+      docker-php:
+        patterns:
+          - "*"

@@ -15,8 +15,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          # SECURITY: checkout base so local actions come from trusted code.
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+
+      - name: Fetch PR head (diff only)
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.head.sha }}
 
       - name: Generate assistant review
         if: secrets.ASSISTANT_API_KEY != '' && secrets.ASSISTANT_BASE_URL != ''

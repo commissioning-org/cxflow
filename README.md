@@ -168,3 +168,25 @@ If you keep the `scheduler` service running, the installer also appends schedule
 
 - This is intended for **local development**.
 - For production, you’d typically use a separate deploy setup (real secrets management, TLS, backups, etc.).
+
+## Dependabot automation (enhanced)
+
+This repo ships with:
+
+- **Dependabot** configuration (`.github/dependabot.yml`) for:
+	- GitHub Actions (daily)
+	- Python (`/ml/requirements.txt`) (daily)
+	- Dockerfiles (`/ml/Dockerfile`, `/.docker/php/Dockerfile`) (daily)
+	- Grouped PRs for patch/minor vs major where supported
+- A **Dependabot PR review comment** workflow powered by the internal assistant endpoint
+- An optional **auto-merge** workflow for Dependabot **patch/minor** updates (CI-gated)
+
+### Required repo secrets
+
+To enable the assistant review comment on Dependabot PRs, set these repository secrets:
+
+- `ASSISTANT_API_KEY`
+- `ASSISTANT_BASE_URL`
+- `ASSISTANT_MODEL`
+
+No secrets are committed to git.
