@@ -35,10 +35,8 @@ docker compose config >/dev/null
 say "==> Smoke: build and start minimal services"
 # Start only what's safe/lightweight; avoid MSSQL in CI by default.
 # App depends_on mssql/redis/mail; those are lightweight except mssql.
-# We start db, redis, mail, ml first, then app.
-docker compose up -d --build db redis mail ml
-
-docker compose up -d --build app
+# We start db, redis, mail, ml, and app with --wait for health checks.
+docker compose up -d --build --wait db redis mail ml app
 
 # Quick health checks.
 # - Laravel app may not be initialized in ./src in some environments; so we only check
