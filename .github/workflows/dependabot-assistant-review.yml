@@ -24,8 +24,20 @@ jobs:
           set -euo pipefail
           git fetch --no-tags --depth=1 origin ${{ github.event.pull_request.head.sha }}
 
+      - name: Check secrets availability
+        id: check-secrets
+        run: |
+          if [[ -n "$ASSISTANT_API_KEY" && -n "$ASSISTANT_BASE_URL" ]]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
+        env:
+          ASSISTANT_API_KEY: ${{ secrets.ASSISTANT_API_KEY }}
+          ASSISTANT_BASE_URL: ${{ secrets.ASSISTANT_BASE_URL }}
+
       - name: Generate assistant review
-        if: secrets.ASSISTANT_API_KEY != '' && secrets.ASSISTANT_BASE_URL != ''
+        if: steps.check-secrets.outputs.available == 'true'
         uses: ./.github/actions/assistant-dependabot-review
         with:
           assistant_api_key: ${{ secrets.ASSISTANT_API_KEY }}
@@ -36,7 +48,7 @@ jobs:
           head_sha: ${{ github.event.pull_request.head.sha }}
 
       - name: Comment on PR
-        if: secrets.ASSISTANT_API_KEY != '' && secrets.ASSISTANT_BASE_URL != ''
+        if: steps.check-secrets.outputs.available == 'true'
         uses: actions/github-script@v7
         with:
           script: |
@@ -54,6 +66,6 @@ jobs:
             });
 
       - name: Skip notice (secrets missing)
-        if: secrets.ASSISTANT_API_KEY == '' || secrets.ASSISTANT_BASE_URL == ''
+        if: steps.check-secrets.outputs.available == 'false'
         run: |
           echo "ASSISTANT_API_KEY and/or ASSISTANT_BASE_URL secrets are not configured; skipping assistant review."
