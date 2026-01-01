@@ -1,0 +1,157 @@
+version: '3.8'
+
+# Apache Superset Docker Compose Configuration
+# For local development and production deployment
+
+x-superset-image: &superset-image apache/superset:3.1.0
+x-superset-depends-on: &superset-depends-on
+  - db
+  - redis
+
+x-superset-env: &superset-env
+  DATABASE_DB: superset
+  DATABASE_HOST: db
+  DATABASE_PASSWORD: ${POSTGRES_PASSWORD:-superset}
+  DATABASE_USER: superset
+  DATABASE_PORT: 5432
+  DATABASE_DIALECT: postgresql
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  FLASK_APP: superset.app:create_app()
+  SUPERSET_ENV: production
+  SUPERSET_LOAD_EXAMPLES: ${SUPERSET_LOAD_EXAMPLES:-no}
+  CYPRESS_CONFIG: false
+  SUPERSET_PORT: 8088
+  MAPBOX_API_KEY: ${MAPBOX_API_KEY:-}
+
+services:
+  # PostgreSQL database for Superset metadata
+  db:
+    image: postgres:15-alpine
+    container_name: superset_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: superset
+      POSTGRES_USER: superset
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-superset}
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U superset"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset_network
+
+  # Redis for caching and Celery
+  redis:
+    image: redis:7-alpine
+    container_name: superset_redis
+    restart: unless-stopped
+    volumes:
+      - superset_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - superset_network
+
+  # Superset web application
+  superset:
+    image: *superset-image
+    container_name: superset_app
+    restart: unless-stopped
+    depends_on: *superset-depends-on
+    ports:
+      - "${SUPERSET_PORT:-8088}:8088"
+    environment:
+      <<: *superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-changethissecretkey}
+    command: ["/app/docker/docker-bootstrap.sh", "app-gunicorn"]
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8088/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - superset_network
+
+  # Superset init container (runs once)
+  superset-init:
+    image: *superset-image
+    container_name: superset_init
+    depends_on: *superset-depends-on
+    environment:
+      <<: *superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-changethissecretkey}
+      ADMIN_USERNAME: ${SUPERSET_ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${SUPERSET_ADMIN_EMAIL:-admin@superset.local}
+      ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD:-admin}
+      ADMIN_FIRST_NAME: ${SUPERSET_ADMIN_FIRST_NAME:-Admin}
+      ADMIN_LAST_NAME: ${SUPERSET_ADMIN_LAST_NAME:-User}
+    command: ["/app/docker/docker-init.sh"]
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    networks:
+      - superset_network
+
+  # Celery worker for async tasks
+  superset-worker:
+    image: *superset-image
+    container_name: superset_worker
+    restart: unless-stopped
+    depends_on: *superset-depends-on
+    environment:
+      <<: *superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-changethissecretkey}
+    command: ["/app/docker/docker-bootstrap.sh", "worker"]
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - superset_network
+
+  # Celery beat scheduler
+  superset-beat:
+    image: *superset-image
+    container_name: superset_beat
+    restart: unless-stopped
+    depends_on: *superset-depends-on
+    environment:
+      <<: *superset-env
+      SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY:-changethissecretkey}
+    command: ["/app/docker/docker-bootstrap.sh", "beat"]
+    volumes:
+      - ./superset_config.py:/app/pythonpath/superset_config.py:ro
+      - superset_home:/app/superset_home
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A superset.tasks.celery_app:app inspect ping -d celery@$$HOSTNAME"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - superset_network
+
+volumes:
+  superset_db_data:
+  superset_redis_data:
+  superset_home:
+
+networks:
+  superset_network:
+    driver: bridge

@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "superset-client"
+version = "1.0.0"
+description = "Apache Superset Python Client Library"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+authors = [
+    {name = "CX Flow Team", email = "team@cxflow.io"},
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Database :: Front-Ends",
+]
+keywords = ["superset", "bi", "analytics", "dashboard", "visualization"]
+
+dependencies = []
+
+[project.optional-dependencies]
+async = ["aiohttp>=3.8.0"]
+pandas = ["pandas>=1.5.0"]
+all = ["aiohttp>=3.8.0", "pandas>=1.5.0"]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+    "mypy>=1.0.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/commissioning-org/cxflow"
+Documentation = "https://github.com/commissioning-org/cxflow/tree/main/superset"
+Repository = "https://github.com/commissioning-org/cxflow"
+
+[project.scripts]
+superset-cli = "superset.cli.superset_cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["superset*"]
+
+[tool.black]
+line-length = 100
+target-version = ["py39", "py310", "py311", "py312"]
+
+[tool.ruff]
+line-length = 100
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

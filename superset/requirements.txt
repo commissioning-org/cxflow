@@ -1,0 +1,22 @@
+# Apache Superset Python Client Requirements
+
+# Core dependencies (stdlib-based client has no required dependencies)
+# The following are optional for enhanced functionality:
+
+# Async HTTP client (optional - for AsyncSupersetClient)
+aiohttp>=3.8.0
+
+# Data processing (optional - for DataFrame support)
+pandas>=1.5.0
+
+# Type checking (development only)
+# mypy>=1.0.0
+# types-requests
+
+# Testing (development only)
+# pytest>=7.0.0
+# pytest-asyncio>=0.21.0
+# pytest-cov>=4.0.0
+
+# CLI enhancements (optional)
+# rich>=13.0.0  # For prettier CLI output
