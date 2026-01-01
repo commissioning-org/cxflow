@@ -46,6 +46,14 @@ declare(strict_types=1);
 // Include TFoS integration module
 require_once __DIR__ . '/tfos_integration.php';
 
+// Include enhanced automation modules
+if (is_file(__DIR__ . '/auto_validation.php')) {
+    require_once __DIR__ . '/auto_validation.php';
+}
+if (is_file(__DIR__ . '/smart_routing.php')) {
+    require_once __DIR__ . '/smart_routing.php';
+}
+
 function orch_bool(string $v, bool $default = false): bool
 {
     $v = trim($v);
@@ -571,6 +579,84 @@ if (orch_bool((string) (getenv('TFOS_ENABLED') ?: 'false'), false)) {
 // Optional AutoML service training.
 $automlResult = orch_run_automl_training($manifest, $runDir);
 
+// Enhanced automation: Data validation
+$validationResult = null;
+if (orch_bool((string) (getenv('CX_AUTO_VALIDATE') ?: 'false'), false) && is_array($manifest) && function_exists('validate_ingestion_data')) {
+    $validationConfig = [
+        'min_completeness' => (float) (getenv('CX_VALIDATE_MIN_COMPLETENESS') ?: 0.7),
+        'min_consistency' => (float) (getenv('CX_VALIDATE_MIN_CONSISTENCY') ?: 0.8),
+        'detect_anomalies' => orch_bool((string) (getenv('CX_VALIDATE_DETECT_ANOMALIES') ?: 'true'), true),
+        'suggest_fixes' => orch_bool((string) (getenv('CX_VALIDATE_SUGGEST_FIXES') ?: 'true'), true),
+        'check_duplicates' => orch_bool((string) (getenv('CX_VALIDATE_CHECK_DUPLICATES') ?: 'true'), true),
+    ];
+    $validationResult = validate_ingestion_data($manifest, $validationConfig);
+    
+    if ($runDir !== null) {
+        file_put_contents(
+            rtrim((string) $runDir, '/') . '/validation.result.json',
+            json_encode($validationResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
+    }
+}
+
+// Enhanced automation: Smart routing with load balancing
+$smartRouteResult = null;
+if (orch_bool((string) (getenv('CX_SMART_ROUTING_ENABLED') ?: 'false'), false) && class_exists('SmartRouter')) {
+    $router = create_smart_router_from_env();
+    
+    $routingPayload = [
+        'event' => (string) $event['event'],
+        'occurred_at' => (string) $event['occurred_at'],
+        'run_id' => $runId,
+        'ok' => $ok,
+        'ingestion' => $event['ingestion'],
+        'validation' => $validationResult,
+    ];
+    
+    if ($includeManifest) {
+        $routingPayload['manifest'] = $manifest;
+    }
+    
+    $smartRouteResult = $router->route($routingPayload);
+    
+    if ($runDir !== null) {
+        file_put_contents(
+            rtrim((string) $runDir, '/') . '/smart_routing.result.json',
+            json_encode($smartRouteResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+        );
+    }
+}
+
+// Enhanced automation: Data transformation
+$transformResult = null;
+if (orch_bool((string) (getenv('CX_AUTO_TRANSFORM') ?: 'false'), false) && is_array($manifest)) {
+    $rowsPath = $manifest['artifacts']['rows_ndjson'] ?? null;
+    if (is_string($rowsPath) && is_file($rowsPath) && is_string($runDir)) {
+        $transformedPath = rtrim($runDir, '/') . '/rows_transformed.ndjson';
+        
+        $pythonBin = (string) (getenv('PYTHON_BIN') ?: 'python3');
+        $transformScript = __DIR__ . '/auto_transform.py';
+        
+        if (is_file($transformScript)) {
+            $cmd = escapeshellarg($pythonBin) . ' ' . escapeshellarg($transformScript) . ' ' . 
+                   escapeshellarg($rowsPath) . ' ' . escapeshellarg($transformedPath);
+            $transformOut = [];
+            $transformRc = 0;
+            exec($cmd, $transformOut, $transformRc);
+            
+            $transformStdout = implode("\n", $transformOut);
+            /** @var mixed $transformJson */
+            $transformJson = json_decode($transformStdout, true);
+            $transformResult = is_array($transformJson) ? $transformJson : ['ok' => false, 'error' => 'invalid_output'];
+            
+            file_put_contents(
+                rtrim($runDir, '/') . '/transform.result.json',
+                json_encode($transformResult, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n"
+            );
+        }
+    }
+}
+
 // Print clean summary to stdout.
 echo json_encode([
     'ok' => $ok,
@@ -583,6 +669,9 @@ echo json_encode([
     'supabase_upload' => $supabaseUpload,
     'tfos_training' => $tfosResult,
     'automl_training' => $automlResult,
+    'validation' => $validationResult,
+    'smart_routing' => $smartRouteResult,
+    'transformation' => $transformResult,
 ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n";
 
 exit($ok ? 0 : ($rc !== 0 ? $rc : 1));
