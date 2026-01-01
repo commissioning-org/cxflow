@@ -102,15 +102,45 @@ class PowerAutomateClient:
                 
                 with urlopen(request, timeout=self.config.timeout) as response:
                     status_code = response.status
-                    response_data = response.read().decode("utf-8")
+                    raw_data = response.read()
+                    
+                    # Get content type and encoding
+                    content_type = response.headers.get("Content-Type", "")
+                    charset = "utf-8"
+                    
+                    # Extract charset from content-type header
+                    if "charset=" in content_type:
+                        charset = content_type.split("charset=")[-1].split(";")[0].strip()
+                    
+                    # Try to decode response
+                    response_data = None
+                    for encoding in [charset, "utf-8", "latin-1", "cp1252"]:
+                        try:
+                            response_data = raw_data.decode(encoding)
+                            break
+                        except (UnicodeDecodeError, LookupError):
+                            continue
+                    
+                    # If all decoding fails, use latin-1 as fallback (never fails)
+                    if response_data is None:
+                        response_data = raw_data.decode("latin-1", errors="replace")
                     
                     # Parse JSON response
                     try:
                         data = json.loads(response_data)
                     except json.JSONDecodeError:
-                        data = response_data
+                        # Check if it's binary/compressed data
+                        if raw_data[:2] == b'\x1f\x8b':  # gzip magic bytes
+                            import gzip
+                            try:
+                                decompressed = gzip.decompress(raw_data)
+                                data = json.loads(decompressed.decode("utf-8"))
+                            except Exception:
+                                data = {"raw_bytes": len(raw_data), "content_type": content_type}
+                        else:
+                            data = response_data
                     
-                    logger.info(f"Successfully fetched data (status: {status_code})")
+                    logger.info(f"Successfully fetched data (status: {status_code}, type: {content_type})")
                     
                     return IngestionResponse(
                         success=True,
