@@ -5,13 +5,24 @@ Provides data ingestion from various sources including Power Automate.
 """
 
 from .knowledge_base import (
-    PowerAutomateClient,
+    PowerAutomateClient as KnowledgeBaseClient,
     KnowledgeBaseIngestor,
-    IngestionConfig,
+    IngestionConfig as KnowledgeBaseConfig,
+)
+
+from .cx_energy import (
+    PowerAutomateClient as CXEnergyClient,
+    CXEnergyIngestor,
+    IngestionConfig as CXEnergyConfig,
 )
 
 __all__ = [
-    "PowerAutomateClient",
+    # Knowledge Base
+    "KnowledgeBaseClient",
     "KnowledgeBaseIngestor",
-    "IngestionConfig",
+    "KnowledgeBaseConfig",
+    # CX Energy
+    "CXEnergyClient",
+    "CXEnergyIngestor",
+    "CXEnergyConfig",
 ]
