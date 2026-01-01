@@ -6,6 +6,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from pathlib import Path
+from urllib.parse import urlencode
 
 
 @dataclass
@@ -43,8 +44,13 @@ class IngestionConfig:
     
     @property
     def full_url(self) -> str:
-        """Get the full webhook URL with query parameters."""
-        params = f"api-version={self.api_version}&sp={self.sp}&sv={self.sv}&sig={self.sig}"
+        """Get the full webhook URL with properly encoded query parameters."""
+        params = urlencode({
+            "api-version": self.api_version,
+            "sp": self.sp,
+            "sv": self.sv,
+            "sig": self.sig,
+        })
         return f"{self.webhook_url}?{params}"
     
     @property

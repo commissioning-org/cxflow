@@ -1,22 +1,22 @@
 """
-Configuration for Power Automate CX Energy Ingestion.
+Configuration for Power Automate CX Performance Capacity Ingestion.
 """
 
 import os
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, quote
 
 
 @dataclass
 class IngestionConfig:
-    """Configuration for Power Automate CX Energy data ingestion."""
+    """Configuration for Power Automate CX Performance Capacity data ingestion."""
     
     # Power Automate Webhook Configuration
     webhook_url: str = field(default_factory=lambda: os.getenv(
-        "CX_ENERGY_WEBHOOK_URL",
-        "https://3eeeffe7fbb2ec6eac086222fffec8.14.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/c04f210aa7d44ffea0d8d01e0a2d3dc8/triggers/manual/paths/invoke"
+        "CX_CAPACITY_WEBHOOK_URL",
+        "https://3eeeffe7fbb2ec6eac086222fffec8.14.environment.api.powerplatform.com:443/powerautomate/automations/direct/workflows/1a760c48e4904f5caa00edab64671623/triggers/manual/paths/invoke"
     ))
     
     # API Parameters
@@ -24,13 +24,13 @@ class IngestionConfig:
     sp: str = "/triggers/manual/run"
     sv: str = "1.0"
     sig: str = field(default_factory=lambda: os.getenv(
-        "CX_ENERGY_SIG",
-        "maw6SpZ229JKSZyR2xKkYHF_jrIJC7bUOGWrwJ3qEPM"
+        "CX_CAPACITY_SIG",
+        "U4fwmby2ELr8-LeVbbowsEcb40NvPkiEEFdIXLFdThQ"
     ))
     
     # Storage Configuration
     storage_path: Path = field(default_factory=lambda: Path(
-        os.getenv("CX_ENERGY_PATH", "./data/cx_energy")
+        os.getenv("CX_CAPACITY_PATH", "./data/cx_performance/capacity")
     ))
     
     # Request Configuration

@@ -16,6 +16,12 @@ from .cx_energy import (
     IngestionConfig as CXEnergyConfig,
 )
 
+from .cx_performance.capacity import (
+    PowerAutomateClient as CapacityClient,
+    CapacityIngestor,
+    IngestionConfig as CapacityConfig,
+)
+
 __all__ = [
     # Knowledge Base
     "KnowledgeBaseClient",
@@ -25,4 +31,8 @@ __all__ = [
     "CXEnergyClient",
     "CXEnergyIngestor",
     "CXEnergyConfig",
+    # CX Performance Capacity
+    "CapacityClient",
+    "CapacityIngestor",
+    "CapacityConfig",
 ]
