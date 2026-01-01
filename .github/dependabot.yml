@@ -86,3 +86,53 @@ updates:
       docker-php:
         patterns:
           - "*"
+
+  # Composer (PHP) dependencies for Laravel app
+  - package-ecosystem: "composer"
+    directory: "/my-app"
+    schedule:
+      interval: "daily"
+      time: "04:00"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "php"
+    commit-message:
+      prefix: "deps(composer)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    groups:
+      composer-patch-minor:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      composer-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
+
+  # npm dependencies for Laravel app
+  - package-ecosystem: "npm"
+    directory: "/my-app"
+    schedule:
+      interval: "daily"
+      time: "04:15"
+      timezone: "UTC"
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "deps(npm)"
+      include: "scope"
+    open-pull-requests-limit: 10
+    groups:
+      npm-patch-minor:
+        applies-to: version-updates
+        update-types:
+          - "patch"
+          - "minor"
+      npm-major:
+        applies-to: version-updates
+        update-types:
+          - "major"
