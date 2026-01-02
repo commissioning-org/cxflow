@@ -272,3 +272,19 @@ Source: `README.md`
 - Where are HTTP routes defined and wired to handlers?
 - Which crate is the indexing/search engine core, and what are its key data structures?
 - How does the task scheduler persist state and manage batches?
+
+## Integration notes (this workspace)
+
+We integrated Meilisearch into the FastAPI ML service (`ml/app`) via Meilisearch's REST API (instead of embedding Rust crates).
+
+- New settings in `ml/app/config.py` (env prefix `ML_`): `MEILI_URL`, `MEILI_API_KEY`, `MEILI_MODELS_INDEX`, `MEILI_EXPERIMENTS_INDEX`, etc.
+- New stdlib-only client: `ml/app/services/meilisearch.py`
+- New indexer: `ml/app/services/search_indexer.py` (builds documents from `MODELS_DIR` metadata + experiments index)
+- New API router: `ml/app/api/search.py` wired into `ml/app/main.py`.
+
+Endpoints:
+
+- `GET /search/health`
+- `GET /search/models?q=...&filter=...`
+- `GET /search/experiments?q=...&filter=...`
+- `POST /search/reindex` (supports `dry_run`)
