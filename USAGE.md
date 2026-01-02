@@ -16,6 +16,12 @@ python -m research_agent report meilisearch/meilisearch
 
 # Search for code across the repo
 python -m research_agent search meilisearch/meilisearch "IndexScheduler"
+
+# Respect .gitignore by default; add extra ignore globs
+python -m research_agent report meilisearch/meilisearch --ignore '*.lock' --ignore '*.env'
+
+# Disable gitignore filtering if you want to scan everything
+python -m research_agent report meilisearch/meilisearch --no-gitignore
 ```
 
 ### Features
@@ -23,6 +29,7 @@ python -m research_agent search meilisearch/meilisearch "IndexScheduler"
 - Scans files and builds an inverted index
 - Extracts Cargo workspace members, README, env vars
 - Generates markdown reports
+- Respects `.gitignore` and optional `.research-agentignore`
 
 ---
 
