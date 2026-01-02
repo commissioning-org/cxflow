@@ -24,7 +24,7 @@ final class UsersTest extends TestCase
         // UserCollection shape
         $resp->assertJsonStructure([
             'data' => [
-                '*' => ['id', 'name', 'email', 'avatar_url', 'status', 'created_at', 'links'],
+                '*' => ['id', 'name', 'avatar_url', 'status', 'created_at', 'links'],
             ],
             'meta' => ['total', 'per_page', 'current_page', 'last_page', 'from', 'to'],
             'links' => ['first', 'last', 'prev', 'next'],
@@ -42,7 +42,7 @@ final class UsersTest extends TestCase
         $resp->assertOk();
         $resp->assertJsonPath('data.id', $user->id);
         $resp->assertJsonStructure([
-            'data' => ['id', 'name', 'email', 'links'],
+            'data' => ['id', 'name', 'links'],
             'meta' => ['version'],
         ]);
     }
