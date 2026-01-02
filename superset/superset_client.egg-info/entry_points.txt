@@ -1,0 +1,2 @@
+[console_scripts]
+superset-cli = superset.cli.superset_cli:main

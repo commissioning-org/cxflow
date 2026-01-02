@@ -1,0 +1,8 @@
+README.md
+pyproject.toml
+superset_client.egg-info/PKG-INFO
+superset_client.egg-info/SOURCES.txt
+superset_client.egg-info/dependency_links.txt
+superset_client.egg-info/entry_points.txt
+superset_client.egg-info/requires.txt
+superset_client.egg-info/top_level.txt
