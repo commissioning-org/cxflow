@@ -6,12 +6,12 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Requests\Api\AssistantJsonRequest;
 use App\Http\Requests\Api\AssistantTextRequest;
-use App\Services\Assistant\AssistantService;
+use App\Services\Assistant\Contracts\Assistant;
 use Illuminate\Http\JsonResponse;
 
 final class AssistantController extends ApiController
 {
-    public function __construct(private readonly AssistantService $assistant)
+    public function __construct(private readonly Assistant $assistant)
     {
     }
 

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Services\Assistant;
 
+use App\Services\Assistant\Contracts\Assistant as AssistantContract;
 use Illuminate\Http\Client\RequestException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
@@ -20,7 +21,7 @@ use Illuminate\Support\Str;
  * - fast: optional caching
  * - quiet: never exposes provider/model details to end users
  */
-final class AssistantService
+final class AssistantService implements AssistantContract
 {
     public function __construct(private readonly AssistantClient $client)
     {
