@@ -26,6 +26,11 @@ src/database/storage.env
 .cxflow/audit/
 .cxflow/metadata/
 
+# Local credentials (NEVER commit)
+creds/
+creds/**/*.pem
+creds/**/*.key
+
 # Python cache
 __pycache__/
 *.pyc

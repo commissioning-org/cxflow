@@ -9,6 +9,7 @@ services:
     volumes:
       - ./src:/var/www/html
       - composer_cache:/tmp/composer-cache
+      - ./creds:/run/creds:ro
     environment:
       # Apache vhost is configured for Laravel's /public
       APACHE_DOCUMENT_ROOT: /var/www/html/public
@@ -27,6 +28,9 @@ services:
       ASSISTANT_BASE_URL: ${ASSISTANT_BASE_URL:-https://models.inference.ai.azure.com}
       ASSISTANT_ALLOW_OTHER_MODELS: ${ASSISTANT_ALLOW_OTHER_MODELS:-false}
       ASSISTANT_TIMEOUT_SECONDS: ${ASSISTANT_TIMEOUT_SECONDS:-60}
+
+      # Optional: private key material (mount via ./creds, never commit)
+      CXFLOWLLM_PRIVATE_KEY_PATH: ${CXFLOWLLM_PRIVATE_KEY_PATH:-/run/creds/cxflowllm.2026-01-02.private-key.pem}
 
       # Internal AutoML service
       AUTOML_BASE_URL: ${AUTOML_BASE_URL:-http://ml:8000}
@@ -84,9 +88,11 @@ services:
       ML_ENABLE_RATE_LIMITING: ${ML_ENABLE_RATE_LIMITING:-true}
       ML_RATE_LIMIT_REQUESTS: ${ML_RATE_LIMIT_REQUESTS:-100}
       ML_RATE_LIMIT_WINDOW_SEC: ${ML_RATE_LIMIT_WINDOW_SEC:-60}
+      CXFLOWLLM_PRIVATE_KEY_PATH: ${CXFLOWLLM_PRIVATE_KEY_PATH:-/run/creds/cxflowllm.2026-01-02.private-key.pem}
     volumes:
       - ml_models:/models
       - ml_experiments:/experiments
+      - ./creds:/run/creds:ro
     ports:
       - "${ML_PORT:-8090}:8000"
 
@@ -145,8 +151,10 @@ services:
     volumes:
       - ./src:/var/www/html
       - composer_cache:/tmp/composer-cache
+      - ./creds:/run/creds:ro
     environment:
       COMPOSER_CACHE_DIR: /tmp/composer-cache
+      CXFLOWLLM_PRIVATE_KEY_PATH: ${CXFLOWLLM_PRIVATE_KEY_PATH:-/run/creds/cxflowllm.2026-01-02.private-key.pem}
     depends_on:
       db:
         condition: service_healthy
@@ -162,9 +170,12 @@ services:
     container_name: laravel_scheduler
     volumes:
       - ./src:/var/www/html
+      - ./creds:/run/creds:ro
     depends_on:
       db:
         condition: service_healthy
+    environment:
+      CXFLOWLLM_PRIVATE_KEY_PATH: ${CXFLOWLLM_PRIVATE_KEY_PATH:-/run/creds/cxflowllm.2026-01-02.private-key.pem}
     command: ["bash", "-lc", "php artisan schedule:work"]
 
   # Node for Vite / frontend tooling
