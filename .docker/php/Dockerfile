@@ -15,10 +15,13 @@ RUN apt-get update \
     git \
     unzip \
     zip \
+    pkg-config \
+    zlib1g-dev \
     libzip-dev \
     libicu-dev \
     libonig-dev \
     libpng-dev \
+    libjpeg-dev \
     libjpeg62-turbo-dev \
     libfreetype6-dev \
     ca-certificates \
@@ -28,8 +31,13 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 # PHP extensions
-RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
-  && docker-php-ext-install -j$(nproc) \
+# Build GD separately to make CI failures clearer and ensure prerequisites are present.
+RUN set -eux; \
+  docker-php-ext-configure gd --with-freetype --with-jpeg; \
+  docker-php-ext-install -j"$(nproc)" gd
+
+RUN set -eux; \
+  docker-php-ext-install -j"$(nproc)" \
     pdo_mysql \
     mbstring \
     bcmath \
@@ -38,7 +46,6 @@ RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     sockets \
     zip \
     intl \
-    gd \
     opcache
 
 # Redis extension (recommended for Laravel cache/queue)

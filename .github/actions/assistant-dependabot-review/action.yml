@@ -38,18 +38,18 @@ runs:
         {
           "pr": {"number": ${{ inputs.pr_number }}, "base": "$base_sha", "head": "$head_sha"},
           "changed_files": $(python - <<'PY'
-import json,sys
-files=sys.stdin.read().splitlines()
-print(json.dumps(files))
-PY
-<<<"$changed_files"),
+        import json,sys
+        files=sys.stdin.read().splitlines()
+        print(json.dumps(files))
+        PY
+        <<<"$changed_files"),
           "diff": $(python - <<'PY'
-import json,sys
-print(json.dumps(sys.stdin.read()))
-PY
-<<<"$patch")
+        import json,sys
+        print(json.dumps(sys.stdin.read()))
+        PY
+        <<<"$patch")
         }
-JSON
+        JSON
 
     - name: Request assistant review
       shell: bash
@@ -77,15 +77,15 @@ MD
         # OpenAI-compatible chat completions.
         # NOTE: Keep prompt free of any provider/model naming.
         prompt=$(python - <<'PY'
-import json
-with open('review_input.json','r') as f:
-  data=json.load(f)
-print(
-  "You are reviewing a dependency update PR.\n"
-  "Return JSON with keys: summary, risks, breaking_changes, recommended_checks.\n\n"
-  "Input:\n" + json.dumps(data, indent=2)
-)
-PY
+        import json
+        with open('review_input.json','r') as f:
+          data=json.load(f)
+        print(
+          "You are reviewing a dependency update PR.\n"
+          "Return JSON with keys: summary, risks, breaking_changes, recommended_checks.\n\n"
+          "Input:\n" + json.dumps(data, indent=2)
+        )
+        PY
 )
 
         # Export prompt via env to avoid shell escaping issues.
@@ -93,18 +93,18 @@ PY
 
         # Render request body.
         body=$(python - <<'PY'
-import json,os
-prompt=os.environ['PROMPT']
-model=os.environ.get('ASSISTANT_MODEL','')
-print(json.dumps({
-  "model": model,
-  "messages": [
-    {"role": "system", "content": "Return ONLY valid JSON."},
-    {"role": "user", "content": prompt}
-  ],
-  "temperature": 0.2
-}))
-PY
+        import json,os
+        prompt=os.environ['PROMPT']
+        model=os.environ.get('ASSISTANT_MODEL','')
+        print(json.dumps({
+          "model": model,
+          "messages": [
+            {"role": "system", "content": "Return ONLY valid JSON."},
+            {"role": "user", "content": prompt}
+          ],
+          "temperature": 0.2
+        }))
+        PY
 )
 
         # POST
@@ -115,45 +115,45 @@ PY
 
         # Extract JSON content (best-effort).
         python - <<'PY'
-import json,sys
-resp=json.loads(sys.stdin.read())
-content=resp.get('choices',[{}])[0].get('message',{}).get('content','')
-print(content)
-PY
-<<<"$resp" > review_output.json
+        import json,sys
+        resp=json.loads(sys.stdin.read())
+        content=resp.get('choices',[{}])[0].get('message',{}).get('content','')
+        print(content)
+        PY
+        <<<"$resp" > review_output.json
 
     - name: Format markdown comment
       shell: bash
       run: |
         set -euo pipefail
         python - <<'PY'
-import json
-p='review_output.json'
-with open(p,'r') as f:
-  raw=f.read().strip()
-try:
-  data=json.loads(raw)
-except Exception:
-  data={"summary": raw}
+        import json
+        p='review_output.json'
+        with open(p,'r') as f:
+          raw=f.read().strip()
+        try:
+          data=json.loads(raw)
+        except Exception:
+          data={"summary": raw}
 
-summary=data.get('summary','')
-risks=data.get('risks',[])
-bc=data.get('breaking_changes',[])
-checks=data.get('recommended_checks',[])
+        summary=data.get('summary','')
+        risks=data.get('risks',[])
+        bc=data.get('breaking_changes',[])
+        checks=data.get('recommended_checks',[])
 
-def bullets(x):
-  if not x:
-    return "- (none)"
-  if isinstance(x,str):
-    return "- " + x
-  return "\n".join(["- " + str(i) for i in x])
+        def bullets(x):
+          if not x:
+            return "- (none)"
+          if isinstance(x,str):
+            return "- " + x
+          return "\n".join(["- " + str(i) for i in x])
 
-md = """### Dependency update review (automated)\n\n"""
-md += f"**Summary**\n\n{summary}\n\n"
-md += "**Risks**\n\n" + bullets(risks) + "\n\n"
-md += "**Breaking changes**\n\n" + bullets(bc) + "\n\n"
-md += "**Recommended checks**\n\n" + bullets(checks) + "\n"
+        md = """### Dependency update review (automated)\n\n"""
+        md += f"**Summary**\n\n{summary}\n\n"
+        md += "**Risks**\n\n" + bullets(risks) + "\n\n"
+        md += "**Breaking changes**\n\n" + bullets(bc) + "\n\n"
+        md += "**Recommended checks**\n\n" + bullets(checks) + "\n"
 
-with open('review_comment.md','w') as f:
-  f.write(md)
-PY
+        with open('review_comment.md','w') as f:
+          f.write(md)
+        PY

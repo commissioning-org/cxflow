@@ -40,7 +40,7 @@ jobs:
       run: php -r "file_exists('.env') || copy('.env.example', '.env');"
 
     - name: Install dependencies
-      run: composer install --no-interaction --no-progress --prefer-dist
+      run: composer install --no-progress --prefer-dist
 
     - name: Generate key
       run: php artisan key:generate
@@ -49,4 +49,4 @@ jobs:
       run: chmod -R ug+rwX storage bootstrap/cache
 
     - name: Execute tests
-      run: php artisan test --no-interaction
+      run: php artisan test
