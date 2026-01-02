@@ -32,7 +32,69 @@ from enum import Enum
 import logging
 
 import yaml
-from pydantic import BaseModel, Field
+try:
+    from pydantic import BaseModel, Field  # type: ignore
+except Exception:  # pragma: no cover
+    # Lightweight fallback to keep the builder usable without pydantic.
+    # This is NOT a full pydantic replacement; it only supports the subset
+    # this module needs (construction from dicts + model_dump()).
+    from copy import deepcopy
+
+    class _FieldInfo:
+        def __init__(self, default: Any = None, default_factory: Optional[Callable[[], Any]] = None):
+            self.default = default
+            self.default_factory = default_factory
+
+        def get_default(self) -> Any:
+            if self.default_factory is not None:
+                return self.default_factory()
+            return deepcopy(self.default)
+
+    def Field(default: Any = None, default_factory: Optional[Callable[[], Any]] = None, **_: Any) -> Any:  # type: ignore
+        return _FieldInfo(default=default, default_factory=default_factory)
+
+    class BaseModel:  # type: ignore
+        def __init__(self, **data: Any):
+            # Populate annotated fields with per-instance defaults.
+            annotations = getattr(self.__class__, '__annotations__', {}) or {}
+            for key in annotations.keys():
+                if key in data:
+                    setattr(self, key, data[key])
+                    continue
+
+                if hasattr(self.__class__, key):
+                    v = getattr(self.__class__, key)
+                    if isinstance(v, _FieldInfo):
+                        setattr(self, key, v.get_default())
+                    elif isinstance(v, (list, dict, set)):
+                        setattr(self, key, deepcopy(v))
+                    else:
+                        setattr(self, key, v)
+                else:
+                    setattr(self, key, None)
+
+            # Allow extra keys (pydantic would validate; we just set them)
+            for k, v in data.items():
+                if not hasattr(self, k):
+                    setattr(self, k, v)
+
+        def model_dump(self) -> Dict[str, Any]:
+            def dump(obj: Any) -> Any:
+                if isinstance(obj, BaseModel):
+                    return obj.model_dump()
+                if isinstance(obj, list):
+                    return [dump(x) for x in obj]
+                if isinstance(obj, dict):
+                    return {k: dump(v) for k, v in obj.items()}
+                return obj
+
+            annotations = getattr(self.__class__, '__annotations__', {}) or {}
+            return {k: dump(getattr(self, k, None)) for k in annotations.keys()}
+
+from jupyterbook.themes import BUILTIN_THEMES, ThemeConfig, ThemeEngine
+from jupyterbook.plugins import HookType, PluginLoader, get_registry
+from jupyterbook.cross_references import LinkResolver, Reference, ReferenceManager, ReferenceType
+from jupyterbook.search import SearchIndexBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -680,9 +742,18 @@ class BookBuilder:
         self.executor = NotebookExecutor(
             cache_dir=self.build_dir / "cache"
         )
+
+        # Optional integrations (initialized lazily in build_html)
+        self._plugin_registry = None
+        self._plugin_loader = None
         
         self._parsed_files: Dict[str, ParsedContent] = {}
         self._toc_structure: List[Dict] = []
+
+        # Cross-reference + search
+        self._ref_manager: Optional[ReferenceManager] = None
+        self._link_resolver: Optional[LinkResolver] = None
+        self._search_builder: Optional[SearchIndexBuilder] = None
     
     def _load_config(self) -> BookConfig:
         """Load configuration from myst.yml."""
@@ -825,43 +896,77 @@ class BookBuilder:
         warnings = []
         built_files = []
         
+        # Initialize plugins / theme / xrefs / search
+        self._initialize_integrations()
+        theme_engine = self._get_theme_engine()
+
         # Parse all content
         self.parse_all()
-        
+
         # Build TOC
         toc = self.build_toc()
-        
+        flat_toc = self._flatten_toc(toc)
+
+        build_context: Dict[str, Any] = {
+            'project_dir': str(self.project_dir),
+            'output_dir': str(output_dir),
+            'execute': execute,
+            'config': self.config.model_dump(),
+            'toc': toc,
+        }
+
+        # Run hooks: pre-build
+        self._run_hooks(HookType.PRE_BUILD, build_context)
+
+        # Cross-reference pass: load bibliography/glossary and extract targets
+        self._build_reference_index(toc=toc)
+
+        # Build search index builder (from source content)
+        self._build_search_index(toc=toc)
+
         # Process each file
         for rel_path, parsed in self._parsed_files.items():
             src_path = self.project_dir / rel_path
-            
+
             try:
                 # Execute notebooks if needed
                 if execute and src_path.suffix == '.ipynb':
                     self.executor.execute_notebook(src_path)
-                
+
                 # Generate HTML
-                html_content = self._render_html(rel_path, parsed)
-                
+                html_content = self._render_html(rel_path, parsed, toc=toc, flat_toc=flat_toc, theme_engine=theme_engine)
+
                 # Write output
                 out_path = output_dir / rel_path.replace('.md', '.html').replace('.ipynb', '.html')
                 out_path.parent.mkdir(parents=True, exist_ok=True)
-                out_path.write_text(html_content)
-                
+                out_path.write_text(html_content, encoding='utf-8')
+
                 built_files.append(str(out_path))
-                
+
             except Exception as e:
                 errors.append(f"{rel_path}: {e}")
                 logger.error(f"Failed to build {rel_path}: {e}")
-        
-        # Generate index
-        index_html = self._generate_index_html(toc)
+
+        # Generate index page (theme-based)
+        index_html = self._generate_index_html(toc=toc, theme_engine=theme_engine)
         index_path = output_dir / "index.html"
-        index_path.write_text(index_html)
+        index_path.write_text(index_html, encoding='utf-8')
         built_files.append(str(index_path))
-        
-        # Copy static assets
-        self._copy_assets(output_dir)
+
+        # Write theme assets
+        theme_engine.write_assets(output_dir)
+
+        # Write search index
+        try:
+            if self._search_builder is not None:
+                self._search_builder.export_json(output_dir / 'search-index.json')
+                built_files.append(str(output_dir / 'search-index.json'))
+        except Exception as e:
+            warnings.append(f"search-index.json: {e}")
+            logger.warning(f"Failed to write search index: {e}")
+
+        # Run hooks: post-build
+        self._run_hooks(HookType.POST_BUILD, build_context)
         
         duration = int((datetime.now() - start_time).total_seconds() * 1000)
         
@@ -873,95 +978,185 @@ class BookBuilder:
             warnings=warnings,
             duration_ms=duration,
         )
-    
-    def _render_html(self, rel_path: str, parsed: ParsedContent) -> str:
-        """Render parsed content to HTML."""
-        # Simple HTML template
+
+    def _render_html(
+        self,
+        rel_path: str,
+        parsed: ParsedContent,
+        *,
+        toc: List[Dict[str, Any]],
+        flat_toc: List[Dict[str, Any]],
+        theme_engine: ThemeEngine,
+    ) -> str:
+        """Render a single page via ThemeEngine."""
         title = parsed.title or Path(rel_path).stem
-        
-        # Convert MyST content to HTML (simplified)
-        content_html = self._myst_to_html(parsed.content)
-        
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title} - {self.config.project.title}</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <nav class="sidebar">
-        <h1>{self.config.project.title}</h1>
-        <div id="toc"></div>
-    </nav>
-    <main>
-        <article>
-            <h1>{title}</h1>
-            {content_html}
-        </article>
-    </main>
-    <script src="/static/book.js"></script>
-</body>
-</html>
-"""
+        page_url = "/" + rel_path.replace('.md', '.html').replace('.ipynb', '.html')
+
+        # Build per-page context
+        nav_items = self._toc_to_nav_items(toc, current_url=page_url)
+        prev_next = self._prev_next(flat_toc, current_url=page_url)
+        toc_items = self._sections_to_toc_items(parsed)
+
+        # Apply plugins + xref link resolution before rendering to HTML
+        md = parsed.content
+        md = self._apply_transforms(md, source_file=rel_path)
+        md, html_injections = self._apply_plugin_directives_and_roles(md, source_file=rel_path)
+        if self._link_resolver is not None:
+            md = self._link_resolver.resolve_content(md, source_file=rel_path, output_format='md')
+
+        content_html = self._myst_to_html(md, html_injections=html_injections)
+
+        # Use site template selection
+        self._select_layout(theme_engine)
+
+        context: Dict[str, Any] = {
+            'lang': 'en',
+            'theme': 'auto',
+            'title': title,
+            'site_title': (self.config.site.title or self.config.project.title),
+            'description': self.config.project.description or '',
+            'favicon': self.config.site.favicon,
+            'katex': True,
+            'mermaid': True,
+            'head_extra': '',
+            'scripts_extra': '',
+            'nav_items': nav_items,
+            'toc_items': toc_items,
+            'breadcrumbs': {
+                'items': [
+                    {'title': 'Home', 'url': '/index.html'},
+                    {'title': title, 'url': page_url},
+                ]
+            },
+            'prev': prev_next.get('prev'),
+            'next': prev_next.get('next'),
+            'content': f"<h1>{title}</h1>\n{content_html}",
+        }
+
+        self._run_hooks(HookType.PRE_RENDER, {'source_file': rel_path, 'url': page_url, **context})
+        html = theme_engine.render_template('base', context)
+        self._run_hooks(HookType.POST_RENDER, {'source_file': rel_path, 'url': page_url, **context})
+        return html
     
-    def _myst_to_html(self, content: str) -> str:
-        """Convert MyST Markdown to HTML (simplified)."""
+    def _myst_to_html(self, content: str, *, html_injections: Optional[Dict[str, str]] = None) -> str:
+        """Convert a subset of MyST/Markdown to HTML.
+
+        This is intentionally lightweight (no full Markdown parser).
+        It supports headings (with anchors), inline emphasis, inline code,
+        fenced code blocks, and markdown links.
+        """
         import html
-        
-        # Escape HTML
+
+        injections = html_injections or {}
+
+        # Pull out fenced code blocks first to avoid mangling.
+        code_map: Dict[str, str] = {}
+        code_idx = 0
+
+        def repl_code(m: re.Match) -> str:
+            nonlocal code_idx
+            lang = (m.group(1) or '').strip()
+            body = m.group(2) or ''
+            token = f"@@CODEBLOCK_{code_idx}@@"
+            code_idx += 1
+            escaped = html.escape(body)
+            class_attr = f" class=\"language-{html.escape(lang)}\"" if lang else ""
+            code_map[token] = f"<pre><code{class_attr}>{escaped}</code></pre>"
+            return token
+
+        content = re.sub(r"```\s*([^\n`]*)\n([\s\S]*?)```", repl_code, content)
+
+        # Escape remaining HTML
         content = html.escape(content)
-        
-        # Convert headings
-        content = re.sub(r'^#{6}\s+(.+)$', r'<h6>\1</h6>', content, flags=re.MULTILINE)
-        content = re.sub(r'^#{5}\s+(.+)$', r'<h5>\1</h5>', content, flags=re.MULTILINE)
-        content = re.sub(r'^#{4}\s+(.+)$', r'<h4>\1</h4>', content, flags=re.MULTILINE)
-        content = re.sub(r'^#{3}\s+(.+)$', r'<h3>\1</h3>', content, flags=re.MULTILINE)
-        content = re.sub(r'^#{2}\s+(.+)$', r'<h2>\1</h2>', content, flags=re.MULTILINE)
-        content = re.sub(r'^#\s+(.+)$', r'<h1>\1</h1>', content, flags=re.MULTILINE)
-        
+
+        # Convert markdown links [text](url)
+        content = re.sub(r'\[([^\]]+)\]\(([^)]+)\)', r'<a href="\2">\1</a>', content)
+
+        # Convert headings with stable anchors
+        def heading_repl(m: re.Match) -> str:
+            level = len(m.group(1))
+            raw_title = html.unescape(m.group(2)).strip()
+            anchor = self._slugify(raw_title)
+            title_html = m.group(2).strip()
+            return f'<h{level} id="{anchor}">{title_html}</h{level}>'
+
+        content = re.sub(r'^(#{1,6})\s+(.+)$', heading_repl, content, flags=re.MULTILINE)
+
         # Convert bold/italic
         content = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', content)
         content = re.sub(r'\*(.+?)\*', r'<em>\1</em>', content)
-        
-        # Convert code
+
+        # Convert inline code
         content = re.sub(r'`([^`]+)`', r'<code>\1</code>', content)
-        
-        # Convert paragraphs
-        paragraphs = content.split('\n\n')
-        content = '\n'.join(f'<p>{p}</p>' if not p.startswith('<') else p for p in paragraphs if p.strip())
-        
+
+        # Convert simple unordered lists
+        def listify(block: str) -> str:
+            lines = [l for l in block.split('\n') if l.strip()]
+            if all(l.lstrip().startswith(('-', '*')) for l in lines):
+                items = []
+                for l in lines:
+                    item = l.lstrip()[1:].strip()
+                    items.append(f"<li>{item}</li>")
+                return '<ul>' + ''.join(items) + '</ul>'
+            return block
+
+        blocks = [b for b in content.split('\n\n') if b.strip()]
+        rendered_blocks: List[str] = []
+        for b in blocks:
+            b2 = listify(b)
+            # Treat injection tokens as block-level so we don't wrap them in <p>.
+            if (
+                b2.startswith('<h')
+                or b2.startswith('<ul')
+                or b2.startswith('<pre')
+                or b2.strip().startswith('@@CODEBLOCK_')
+                or b2.strip().startswith('@@PLUGIN_HTML_')
+            ):
+                rendered_blocks.append(b2)
+            else:
+                rendered_blocks.append(f'<p>{b2}</p>')
+        content = '\n'.join(rendered_blocks)
+
+        # Restore injections (plugin HTML)
+        for token, html_snip in {**code_map, **injections}.items():
+            content = content.replace(html.escape(token), html_snip)
+            content = content.replace(token, html_snip)
+
         return content
     
-    def _generate_index_html(self, toc: List[Dict]) -> str:
-        """Generate index HTML page."""
-        toc_html = self._toc_to_html(toc)
-        
-        return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{self.config.project.title}</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <nav class="sidebar">
-        <h1>{self.config.project.title}</h1>
-        {toc_html}
-    </nav>
-    <main>
-        <article>
-            <h1>{self.config.project.title}</h1>
-            <p>{self.config.project.description or ''}</p>
-            <h2>Table of Contents</h2>
-            {toc_html}
-        </article>
-    </main>
-</body>
-</html>
-"""
+    def _generate_index_html(self, toc: List[Dict[str, Any]], *, theme_engine: ThemeEngine) -> str:
+        """Generate index page using ThemeEngine."""
+        site_title = self.config.site.title or self.config.project.title
+        nav_items = self._toc_to_nav_items(toc, current_url='/index.html')
+
+        toc_list_html = self._toc_to_html(toc)
+        content = (
+            f"<h1>{site_title}</h1>\n"
+            f"<p>{self.config.project.description or ''}</p>\n"
+            f"<h2>Table of Contents</h2>\n"
+            f"{toc_list_html}"
+        )
+
+        self._select_layout(theme_engine)
+        context: Dict[str, Any] = {
+            'lang': 'en',
+            'theme': 'auto',
+            'title': site_title,
+            'site_title': site_title,
+            'description': self.config.project.description or '',
+            'favicon': self.config.site.favicon,
+            'katex': True,
+            'mermaid': True,
+            'head_extra': '',
+            'scripts_extra': '',
+            'nav_items': nav_items,
+            'toc_items': [],
+            'breadcrumbs': {'items': [{'title': 'Home', 'url': '/index.html'}]},
+            'prev': None,
+            'next': None,
+            'content': content,
+        }
+        return theme_engine.render_template('base', context)
     
     def _toc_to_html(self, toc: List[Dict]) -> str:
         """Convert TOC to HTML list."""
@@ -983,101 +1178,302 @@ class BookBuilder:
             items.append(item)
         
         return '<ul>' + '\n'.join(items) + '</ul>'
-    
-    def _copy_assets(self, output_dir: Path):
-        """Copy static assets to output directory."""
-        static_dir = output_dir / "static"
-        static_dir.mkdir(exist_ok=True)
-        
-        # Create default stylesheet
-        css = """
-:root {
-    --primary: #1565c0;
-    --bg: #fafafa;
-    --sidebar-bg: #f5f5f5;
-}
 
-* { box-sizing: border-box; margin: 0; padding: 0; }
+    # ---------------------------------------------------------------------
+    # Integrations: theme, plugins, xrefs, search
+    # ---------------------------------------------------------------------
 
-body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    min-height: 100vh;
-}
+    def _initialize_integrations(self) -> None:
+        if self._plugin_registry is None:
+            self._plugin_registry = get_registry()
+            self._plugin_loader = PluginLoader(self._plugin_registry)
 
-.sidebar {
-    background: var(--sidebar-bg);
-    padding: 2rem;
-    border-right: 1px solid #e0e0e0;
-}
+            # Project-local plugins folder (optional)
+            plugin_dir = self.project_dir / 'plugins'
+            if plugin_dir.exists():
+                self._plugin_loader.load_from_directory(plugin_dir)
 
-.sidebar h1 {
-    font-size: 1.25rem;
-    margin-bottom: 1.5rem;
-    color: var(--primary);
-}
+            # Initialize plugins with site options
+            plugin_config = (self.config.site.options or {}).get('plugins', {})
+            try:
+                self._plugin_registry.initialize_all(plugin_config)
+            except Exception as e:
+                logger.warning(f"Failed to initialize plugins: {e}")
 
-.sidebar ul {
-    list-style: none;
-}
+        if self._ref_manager is None:
+            self._ref_manager = ReferenceManager(self.project_dir)
+            self._link_resolver = LinkResolver(self._ref_manager)
 
-.sidebar li {
-    margin: 0.5rem 0;
-}
+        if self._search_builder is None:
+            self._search_builder = SearchIndexBuilder()
 
-.sidebar a {
-    color: #333;
-    text-decoration: none;
-}
+    def _get_theme_engine(self) -> ThemeEngine:
+        # Map legacy enum values to built-in theme presets
+        theme_key = 'book'
+        if self.config.site.template == ThemeType.ARTICLE:
+            theme_key = 'article'
 
-.sidebar a:hover {
-    color: var(--primary);
-}
+        theme_cfg: ThemeConfig = BUILTIN_THEMES.get(theme_key, BUILTIN_THEMES['book'])
 
-main {
-    padding: 3rem;
-    max-width: 800px;
-}
+        # Allow theme overrides from project theme.yml
+        theme_yml = self.project_dir / 'theme.yml'
+        if theme_yml.exists():
+            try:
+                theme_cfg = ThemeConfig.load(theme_yml)
+            except Exception as e:
+                logger.warning(f"Failed to load theme.yml ({theme_yml}): {e}")
 
-article h1 { font-size: 2rem; margin-bottom: 1rem; }
-article h2 { font-size: 1.5rem; margin: 2rem 0 1rem; }
-article h3 { font-size: 1.25rem; margin: 1.5rem 0 0.75rem; }
+        return ThemeEngine(theme_cfg)
 
-article p { line-height: 1.6; margin-bottom: 1rem; }
+    def _select_layout(self, theme_engine: ThemeEngine) -> None:
+        """Select which layout partial to render (page vs article)."""
+        if self.config.site.template == ThemeType.ARTICLE:
+            theme_engine._templates['layout'] = "{{> article}}"
+        else:
+            theme_engine._templates['layout'] = "{{> page}}"
 
-article code {
-    background: #f5f5f5;
-    padding: 0.2em 0.4em;
-    border-radius: 3px;
-    font-size: 0.9em;
-}
+    def _run_hooks(self, hook_type: HookType, context: Dict[str, Any]) -> None:
+        if self._plugin_registry is None:
+            return
+        for hook in self._plugin_registry.get_hooks(hook_type):
+            try:
+                modified = hook.execute(context)
+                if isinstance(modified, dict):
+                    context.update(modified)
+            except Exception as e:
+                logger.warning(f"Hook {hook.info.name} ({hook_type}) failed: {e}")
 
-article pre {
-    background: #2d2d2d;
-    color: #f8f8f2;
-    padding: 1rem;
-    border-radius: 5px;
-    overflow-x: auto;
-    margin: 1rem 0;
-}
-"""
-        (static_dir / "style.css").write_text(css)
-        
-        # Create minimal JS
-        js = """
-document.addEventListener('DOMContentLoaded', () => {
-    // Highlight current page in navigation
-    const currentPath = window.location.pathname;
-    document.querySelectorAll('.sidebar a').forEach(link => {
-        if (link.getAttribute('href') === currentPath) {
-            link.style.fontWeight = 'bold';
-            link.style.color = 'var(--primary)';
+    def _apply_transforms(self, content: str, *, source_file: str) -> str:
+        if self._plugin_registry is None:
+            return content
+        ctx: Dict[str, Any] = {
+            'source_file': source_file,
+            'project_dir': str(self.project_dir),
+            'config': self.config.model_dump(),
         }
-    });
-});
-"""
-        (static_dir / "book.js").write_text(js)
+        for t in self._plugin_registry.get_transforms():
+            try:
+                content = t.transform(content, source_file=source_file, context=ctx)
+            except Exception as e:
+                logger.warning(f"Transform {t.info.name} failed for {source_file}: {e}")
+        return content
+
+    def _apply_plugin_directives_and_roles(
+        self,
+        content: str,
+        *,
+        source_file: str,
+    ) -> tuple[str, Dict[str, str]]:
+        """Replace plugin directives/roles with raw HTML via injection tokens."""
+        injections: Dict[str, str] = {}
+        if self._plugin_registry is None:
+            return content, injections
+
+        # Directives (```{name} arg\nbody```)
+        directive_re = MystParser.DIRECTIVE_PATTERN
+        idx = 0
+
+        def directive_repl(m: re.Match) -> str:
+            nonlocal idx
+            name = (m.group(1) or '').lower()
+            arg = (m.group(2) or '').strip()
+            body = (m.group(3) or '').strip()
+            plugin = self._plugin_registry.get_directive(name)
+            if not plugin:
+                return m.group(0)
+            try:
+                options, content_body = plugin.parse_options(body)
+                result = plugin.run(arg, options, content_body, source_file)
+                html_snip = result.get('html') if isinstance(result, dict) else None
+                if not html_snip:
+                    return m.group(0)
+                token = f"@@PLUGIN_HTML_{idx}@@"
+                idx += 1
+                injections[token] = html_snip
+                return token
+            except Exception as e:
+                logger.warning(f"Directive {name} failed in {source_file}: {e}")
+                return m.group(0)
+
+        content = directive_re.sub(directive_repl, content)
+
+        # Roles ({role}`content`)
+        role_re = MystParser.ROLE_PATTERN
+
+        def role_repl(m: re.Match) -> str:
+            nonlocal idx
+            role = (m.group(1) or '').lower()
+            body = m.group(2)
+            plugin = self._plugin_registry.get_role(role)
+            if not plugin:
+                return m.group(0)
+            try:
+                html_snip = plugin.run(body, source_file=source_file, output_format='html')
+                token = f"@@PLUGIN_HTML_{idx}@@"
+                idx += 1
+                injections[token] = html_snip
+                return token
+            except Exception as e:
+                logger.warning(f"Role {role} failed in {source_file}: {e}")
+                return m.group(0)
+
+        content = role_re.sub(role_repl, content)
+        return content, injections
+
+    def _build_reference_index(self, *, toc: List[Dict[str, Any]]) -> None:
+        if self._ref_manager is None:
+            return
+
+        # Bibliography (config.project.bibliography)
+        for bib in (self.config.project.bibliography or []):
+            bib_path = (self.project_dir / bib).resolve() if not Path(bib).is_absolute() else Path(bib)
+            if bib_path.exists():
+                try:
+                    self._ref_manager.load_bibliography(bib_path)
+                except Exception as e:
+                    logger.warning(f"Failed to load bibliography {bib_path}: {e}")
+
+        # Glossary (optional conventional file)
+        glossary_path = self.project_dir / 'glossary.yml'
+        if glossary_path.exists():
+            try:
+                self._ref_manager.load_glossary(glossary_path)
+            except Exception as e:
+                logger.warning(f"Failed to load glossary {glossary_path}: {e}")
+
+        # Register documents + extract reference targets
+        for rel_path, parsed in self._parsed_files.items():
+            url = "/" + rel_path.replace('.md', '.html').replace('.ipynb', '.html')
+            title = parsed.title or Path(rel_path).stem
+
+            # register common doc IDs (with/without extension)
+            doc_ids = {rel_path}
+            if rel_path.endswith('.md'):
+                doc_ids.add(rel_path[:-3])
+            if rel_path.endswith('.ipynb'):
+                doc_ids.add(rel_path[:-6])
+            doc_ids.add(Path(rel_path).stem)
+
+            for doc_id in doc_ids:
+                self._ref_manager.register(Reference(
+                    id=str(doc_id),
+                    type=ReferenceType.DOCUMENT,
+                    title=title,
+                    source_file=rel_path,
+                    url=url,
+                    anchor=None,
+                ))
+
+            try:
+                self._ref_manager.extract_from_content(parsed.content, source_file=rel_path)
+            except Exception as e:
+                logger.warning(f"Failed to extract references from {rel_path}: {e}")
+
+    def _build_search_index(self, *, toc: List[Dict[str, Any]]) -> None:
+        if self._search_builder is None:
+            return
+
+        # Clear any previous state in the builder instance
+        self._search_builder = SearchIndexBuilder()
+
+        for rel_path, parsed in self._parsed_files.items():
+            url = "/" + rel_path.replace('.md', '.html').replace('.ipynb', '.html')
+            try:
+                self._search_builder.index_markdown(
+                    content=parsed.content,
+                    url=url,
+                    title=parsed.title,
+                    source_file=rel_path,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to index {rel_path} for search: {e}")
+
+    # ---------------------------------------------------------------------
+    # Navigation helpers
+    # ---------------------------------------------------------------------
+
+    def _flatten_toc(self, toc: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        flat: List[Dict[str, Any]] = []
+
+        def walk(nodes: List[Dict[str, Any]]):
+            for n in nodes:
+                file_path = n.get('file')
+                if file_path:
+                    url = "/" + file_path.replace('.md', '.html').replace('.ipynb', '.html')
+                    flat.append({
+                        'url': url,
+                        'title': n.get('title') or Path(file_path).stem,
+                        'file': file_path,
+                    })
+                if n.get('children'):
+                    walk(n['children'])
+
+        walk(toc)
+        return flat
+
+    def _prev_next(self, flat_toc: List[Dict[str, Any]], *, current_url: str) -> Dict[str, Optional[Dict[str, str]]]:
+        idx = next((i for i, it in enumerate(flat_toc) if it.get('url') == current_url), None)
+        if idx is None:
+            return {'prev': None, 'next': None}
+        prev_item = flat_toc[idx - 1] if idx > 0 else None
+        next_item = flat_toc[idx + 1] if idx + 1 < len(flat_toc) else None
+        return {
+            'prev': ({'url': prev_item['url'], 'title': prev_item['title']} if prev_item else None),
+            'next': ({'url': next_item['url'], 'title': next_item['title']} if next_item else None),
+        }
+
+    def _toc_to_nav_items(self, toc: List[Dict[str, Any]], *, current_url: str) -> List[Dict[str, Any]]:
+        def build(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+            out: List[Dict[str, Any]] = []
+            for n in nodes:
+                file_path = n.get('file')
+                title = n.get('title')
+                url = None
+                if file_path:
+                    url = "/" + file_path.replace('.md', '.html').replace('.ipynb', '.html')
+                    title = title or Path(file_path).stem
+                item: Dict[str, Any] = {
+                    'title': title or '',
+                    'url': url or '#',
+                    'active': bool(url and url == current_url),
+                }
+                if n.get('children'):
+                    children_items = build(n['children'])
+                    if children_items:
+                        item['children'] = {'items': children_items}
+                        # Mark parent active if any child is active
+                        if any(c.get('active') for c in children_items):
+                            item['active'] = True
+                out.append(item)
+            return out
+
+        return build(toc)
+
+    def _sections_to_toc_items(self, parsed: ParsedContent) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
+        for s in parsed.sections:
+            level = int(s.get('level', 2))
+            title = (s.get('title') or '').strip()
+            if not title:
+                continue
+            # Skip H1 to avoid duplicating page title
+            if level <= 1:
+                continue
+            if level > 4:
+                continue
+            items.append({
+                'level': level,
+                'title': title,
+                'anchor': self._slugify(title),
+            })
+        return items
+
+    def _slugify(self, text: str) -> str:
+        text = text.strip().lower()
+        text = re.sub(r'[^a-z0-9\s_-]', '', text)
+        text = re.sub(r'[\s_]+', '-', text)
+        text = re.sub(r'-{2,}', '-', text)
+        return text.strip('-') or 'section'
     
     def build_pdf(
         self,

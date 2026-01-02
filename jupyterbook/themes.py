@@ -303,14 +303,24 @@ class ThemeEngine:
     
     def _load_templates(self):
         """Load HTML templates."""
+        # NOTE: templates use mustache-like sections and partials.
+        # Keep the set of templates self-contained so {{> partial}} always resolves.
         self._templates = {
-            'base': self._get_base_template(),
-            'page': self._get_page_template(),
-            'article': self._get_article_template(),
-            'nav': self._get_nav_template(),
-            'toc': self._get_toc_template(),
-            'search': self._get_search_template(),
-            'footer': self._get_footer_template(),
+            "base": self._get_base_template(),
+            "page": self._get_page_template(),
+            "article": self._get_article_template(),
+            "nav": self._get_nav_template(),
+            "toc": self._get_toc_template(),
+            "search": self._get_search_template(),
+            "footer": self._get_footer_template(),
+            # Partials referenced by page/article/base
+            "layout": "{{> page}}",  # default; can be overridden by caller via context/alt render
+            "sidebar": self._get_sidebar_template(),
+            "header": self._get_header_template(),
+            "breadcrumbs": self._get_breadcrumbs_template(),
+            "page_navigation": self._get_page_navigation_template(),
+            "toc_sidebar": self._get_toc_sidebar_template(),
+            "bibliography": self._get_bibliography_template(),
         }
     
     def generate_css(self) -> str:
@@ -1344,19 +1354,231 @@ kbd {
         Returns:
             Rendered HTML
         """
-        template = self._templates.get(template_name, '')
-        return self._simple_render(template, context)
-    
-    def _simple_render(self, template: str, context: Dict[str, Any]) -> str:
-        """Simple mustache-like template rendering."""
-        result = template
-        
-        # Simple variable substitution
-        for key, value in context.items():
-            if isinstance(value, str):
-                result = result.replace(f'{{{{{key}}}}}', value)
-        
-        return result
+        template = self._templates.get(template_name, "")
+        return self._render_mustache(template, [context])
+
+    # ---------------------------------------------------------------------
+    # Mustache-like rendering (minimal but functional)
+    # ---------------------------------------------------------------------
+
+    _TAG_RE = re.compile(r"{{\s*(.+?)\s*}}", re.DOTALL)
+
+    def _render_mustache(self, template: str, ctx_stack: List[Dict[str, Any]]) -> str:
+        """Render a template supporting: variables, sections, inverted sections, and partials."""
+
+        tokens: List[tuple[str, str]] = []
+        last = 0
+        for m in self._TAG_RE.finditer(template):
+            if m.start() > last:
+                tokens.append(("text", template[last:m.start()]))
+            tokens.append(("tag", m.group(1).strip()))
+            last = m.end()
+        if last < len(template):
+            tokens.append(("text", template[last:]))
+
+        rendered, _ = self._render_tokens(tokens, 0, ctx_stack)
+        return rendered
+
+    def _render_tokens(
+        self,
+        tokens: List[tuple[str, str]],
+        start_idx: int,
+        ctx_stack: List[Dict[str, Any]],
+        stop_on_section_end: str | None = None,
+    ) -> tuple[str, int]:
+        out: List[str] = []
+        i = start_idx
+
+        while i < len(tokens):
+            kind, val = tokens[i]
+            if kind == "text":
+                out.append(val)
+                i += 1
+                continue
+
+            tag = val
+
+            # Section end
+            if tag.startswith("/"):
+                name = tag[1:].strip()
+                if stop_on_section_end and name == stop_on_section_end:
+                    return "".join(out), i + 1
+                i += 1
+                continue
+
+            # Partials
+            if tag.startswith(">"):
+                partial_name = tag[1:].strip()
+                partial = self._templates.get(partial_name, "")
+                out.append(self._render_mustache(partial, ctx_stack))
+                i += 1
+                continue
+
+            # Unescaped variables: {{& var}} and {{{var}}}
+            if tag.startswith("&"):
+                name = tag[1:].strip()
+                out.append(self._stringify(self._lookup(name, ctx_stack)))
+                i += 1
+                continue
+            if tag.startswith("{") and tag.endswith("}"):
+                name = tag.strip("{} ")
+                out.append(self._stringify(self._lookup(name, ctx_stack)))
+                i += 1
+                continue
+
+            # Sections / inverted sections
+            if tag.startswith("#") or tag.startswith("^"):
+                inverted = tag.startswith("^")
+                name = tag[1:].strip()
+                inner, next_i = self._collect_section(tokens, i + 1, name)
+                value = self._lookup(name, ctx_stack)
+
+                truthy = bool(value)
+                if inverted:
+                    if not truthy:
+                        rendered, _ = self._render_tokens(inner, 0, ctx_stack)
+                        out.append(rendered)
+                else:
+                    if isinstance(value, list):
+                        for item in value:
+                            if isinstance(item, dict):
+                                sub_stack = [item] + ctx_stack
+                            else:
+                                sub_stack = [{".": item}] + ctx_stack
+                            rendered, _ = self._render_tokens(inner, 0, sub_stack)
+                            out.append(rendered)
+                    elif truthy:
+                        rendered, _ = self._render_tokens(inner, 0, ctx_stack)
+                        out.append(rendered)
+
+                i = next_i
+                continue
+
+            # Variable
+            out.append(self._stringify(self._lookup(tag, ctx_stack)))
+            i += 1
+
+        return "".join(out), i
+
+    def _collect_section(
+        self,
+        tokens: List[tuple[str, str]],
+        start_idx: int,
+        name: str,
+    ) -> tuple[List[tuple[str, str]], int]:
+        """Collect tokens until the matching {{/name}} (supports nesting)."""
+        inner: List[tuple[str, str]] = []
+        depth = 1
+        i = start_idx
+        while i < len(tokens):
+            kind, val = tokens[i]
+            if kind == "tag":
+                t = val.strip()
+                if t.startswith("#") or t.startswith("^"):
+                    if t[1:].strip() == name:
+                        depth += 1
+                elif t.startswith("/"):
+                    if t[1:].strip() == name:
+                        depth -= 1
+                        if depth == 0:
+                            return inner, i + 1
+            inner.append(tokens[i])
+            i += 1
+        return inner, i
+
+    def _lookup(self, name: str, ctx_stack: List[Dict[str, Any]]) -> Any:
+        """Look up a variable in the context stack (supports dotted names and '.' value)."""
+        if name == ".":
+            for ctx in ctx_stack:
+                if "." in ctx:
+                    return ctx["."]
+            return None
+
+        parts = name.split(".")
+        for ctx in ctx_stack:
+            cur: Any = ctx
+            found = True
+            for p in parts:
+                if isinstance(cur, dict) and p in cur:
+                    cur = cur[p]
+                else:
+                    found = False
+                    break
+            if found:
+                return cur
+        return None
+
+    def _stringify(self, value: Any) -> str:
+        if value is None:
+            return ""
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        return str(value)
+
+    # ---------------------------------------------------------------------
+    # Partial templates (previously missing)
+    # ---------------------------------------------------------------------
+
+    def _get_sidebar_template(self) -> str:
+        return """
+<aside class=\"sidebar\" aria-label=\"Sidebar\">
+  <div class=\"sidebar-header\">
+    <a class=\"site-title\" href=\"/index.html\">{{site_title}}</a>
+    <button class=\"theme-toggle\" type=\"button\" aria-label=\"Toggle theme\">🌓</button>
+  </div>
+  {{> search}}
+  {{> nav}}
+</aside>
+"""
+
+    def _get_header_template(self) -> str:
+        return """
+<header class=\"site-header\">
+  <div class=\"header-inner\">
+    <a class=\"site-title\" href=\"/index.html\">{{site_title}}</a>
+    {{> search}}
+    <button class=\"theme-toggle\" type=\"button\" aria-label=\"Toggle theme\">🌓</button>
+  </div>
+</header>
+"""
+
+    def _get_breadcrumbs_template(self) -> str:
+        return """
+{{#breadcrumbs}}
+<nav class=\"breadcrumbs\" aria-label=\"Breadcrumb\">
+  <ol>
+    {{#items}}
+    <li><a href=\"{{url}}\">{{title}}</a></li>
+    {{/items}}
+  </ol>
+</nav>
+{{/breadcrumbs}}
+"""
+
+    def _get_page_navigation_template(self) -> str:
+        return """
+<nav class=\"page-nav\" aria-label=\"Page navigation\">
+  {{#prev}}<a class=\"page-nav-prev\" href=\"{{url}}\">← {{title}}</a>{{/prev}}
+  {{#next}}<a class=\"page-nav-next\" href=\"{{url}}\">{{title}} →</a>{{/next}}
+</nav>
+"""
+
+    def _get_toc_sidebar_template(self) -> str:
+        return """
+<aside class=\"toc-sidebar\" aria-label=\"On this page\">
+  {{> toc}}
+</aside>
+"""
+
+    def _get_bibliography_template(self) -> str:
+        return """
+{{#bibliography_html}}
+<section class=\"bibliography\">
+  <h2>References</h2>
+  {{{bibliography_html}}}
+</section>
+{{/bibliography_html}}
+"""
     
     def write_assets(self, output_dir: Path):
         """

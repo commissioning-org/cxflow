@@ -18,9 +18,62 @@ from typing import Any, Dict, List, Optional
 from enum import Enum
 import logging
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form
-from fastapi.responses import FileResponse, StreamingResponse
-from pydantic import BaseModel, Field
+_FASTAPI_AVAILABLE = True
+try:
+    from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Form  # type: ignore
+    from fastapi.responses import FileResponse, StreamingResponse  # type: ignore
+except Exception:  # pragma: no cover
+    _FASTAPI_AVAILABLE = False
+    # Provide minimal placeholders so this module can be imported without fastapi.
+    FastAPI = Any  # type: ignore
+    HTTPException = Exception  # type: ignore
+    BackgroundTasks = Any  # type: ignore
+    UploadFile = Any  # type: ignore
+    File = Any  # type: ignore
+    Form = Any  # type: ignore
+    FileResponse = Any  # type: ignore
+    StreamingResponse = Any  # type: ignore
+
+try:
+    from pydantic import BaseModel, Field  # type: ignore
+except Exception:  # pragma: no cover
+    # Keep API models importable when pydantic isn't installed.
+    from copy import deepcopy
+    from typing import Callable
+
+    class _FieldInfo:
+        def __init__(self, default: Any = None, default_factory: Optional[Callable[[], Any]] = None):
+            self.default = default
+            self.default_factory = default_factory
+
+        def get_default(self) -> Any:
+            if self.default_factory is not None:
+                return self.default_factory()
+            return deepcopy(self.default)
+
+    def Field(default: Any = None, default_factory: Optional[Callable[[], Any]] = None, **_: Any) -> Any:  # type: ignore
+        return _FieldInfo(default=default, default_factory=default_factory)
+
+    class BaseModel:  # type: ignore
+        def __init__(self, **data: Any):
+            annotations = getattr(self.__class__, '__annotations__', {}) or {}
+            for key in annotations.keys():
+                if key in data:
+                    setattr(self, key, data[key])
+                    continue
+                if hasattr(self.__class__, key):
+                    v = getattr(self.__class__, key)
+                    if isinstance(v, _FieldInfo):
+                        setattr(self, key, v.get_default())
+                    elif isinstance(v, (list, dict, set)):
+                        setattr(self, key, deepcopy(v))
+                    else:
+                        setattr(self, key, v)
+                else:
+                    setattr(self, key, None)
+            for k, v in data.items():
+                if not hasattr(self, k):
+                    setattr(self, k, v)
 
 # Import book builder components
 from .book_builder import (
@@ -751,6 +804,9 @@ def create_book_router() -> FastAPI:
 
 def create_app() -> FastAPI:
     """Create the FastAPI application."""
+
+    if not _FASTAPI_AVAILABLE:
+        raise ImportError("fastapi is required to use the CXFlow Book Builder API service")
     
     app = FastAPI(
         title="CXFlow Book Builder API",
@@ -782,7 +838,11 @@ def create_app() -> FastAPI:
 
 
 # Create app instance
-app = create_app()
+try:
+    app = create_app() if _FASTAPI_AVAILABLE else None
+except Exception as e:  # pragma: no cover
+    logger.warning(f"CXFlow Book Builder API is disabled: {e}")
+    app = None
 
 
 if __name__ == "__main__":
