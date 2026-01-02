@@ -49,7 +49,6 @@ jobs:
           attempts=5
           delay=5
           ok=0
-          last_out=""
 
           for i in $(seq 1 "$attempts"); do
             echo "Attempt $i/$attempts"
@@ -63,7 +62,6 @@ jobs:
             rc=$?
             set -e
 
-            last_out="$out"
             printf "%s\n" "$out" > ingestion/last_run_output.json
 
             # Determine success:

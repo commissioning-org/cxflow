@@ -86,7 +86,7 @@ MD
           "Input:\n" + json.dumps(data, indent=2)
         )
         PY
-)
+        )
 
         # Export prompt via env to avoid shell escaping issues.
         export PROMPT="$prompt"
@@ -105,7 +105,7 @@ MD
           "temperature": 0.2
         }))
         PY
-)
+        )
 
         # POST
         resp=$(curl -sS --fail -X POST "$url/v1/chat/completions" \

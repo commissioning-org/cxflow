@@ -37,16 +37,10 @@ RUN set -eux; \
   docker-php-ext-install -j"$(nproc)" gd
 
 RUN set -eux; \
-  docker-php-ext-install -j"$(nproc)" \
-    pdo_mysql \
-    mbstring \
-    bcmath \
-    pcntl \
-    exif \
-    sockets \
-    zip \
-    intl \
-    opcache
+  for ext in pdo_mysql mbstring bcmath pcntl exif sockets zip intl opcache; do \
+    echo "==> Installing PHP extension: ${ext}"; \
+    docker-php-ext-install -j"$(nproc)" "${ext}"; \
+  done
 
 # Redis extension (recommended for Laravel cache/queue)
 RUN pecl install redis \
