@@ -35,6 +35,10 @@ This folder contains the Apache configuration used by the `php:8.3-apache` image
 - `conf-available/60-healthz.conf`
   - Adds a simple `/healthz` endpoint served from `/var/www/_health/healthz.txt` so basic container health doesn’t depend on Laravel routing.
 
+- `conf-available/70-ml-proxy.conf`
+  - Reverse proxies the internal AutoML service (`ml` container) under `/ml/`.
+  - Example: `http://localhost:<APP_PORT>/ml/health` (upstream: `http://ml:8000/health`).
+
 ## Notes
 
 - Modules are enabled in `.docker/php/Dockerfile` (`a2enmod ...`).

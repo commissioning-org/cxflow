@@ -79,6 +79,7 @@ RUN set -eux; \
 # Apache modules for Laravel + useful defaults
 RUN set -eux; \
   a2enmod rewrite headers env expires deflate status remoteip reqtimeout; \
+  a2enmod proxy proxy_http; \
   a2enmod brotli || true
 
 # Apache vhost + shared config snippets
@@ -86,7 +87,7 @@ COPY .docker/apache/000-default.conf /etc/apache2/sites-available/000-default.co
 COPY .docker/apache/conf-available/ /etc/apache2/conf-available/
 
 RUN set -eux; \
-  a2enconf 00-base 10-headers 20-compression 30-caching 40-remoteip 50-status 60-healthz; \
+  a2enconf 00-base 10-headers 20-compression 30-caching 40-remoteip 50-status 60-healthz 70-ml-proxy; \
   mkdir -p /var/www/_health; \
   printf 'ok\n' > /var/www/_health/healthz.txt
 
