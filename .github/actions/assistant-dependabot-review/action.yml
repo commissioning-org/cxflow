@@ -90,9 +90,14 @@ runs:
 
         python - <<'PY'
         import json
+        import os
 
         with open('review_input.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
+
+        model = os.environ.get('ASSISTANT_MODEL', '').strip()
+        if not model:
+          raise SystemExit('ASSISTANT_MODEL is missing')
 
         prompt = (
             "You are reviewing a dependency update PR.\n"
@@ -101,7 +106,7 @@ runs:
         )
 
         body = {
-            "model": "${ASSISTANT_MODEL}",
+          "model": model,
             "messages": [
                 {"role": "system", "content": "Return ONLY valid JSON."},
                 {"role": "user", "content": prompt},
