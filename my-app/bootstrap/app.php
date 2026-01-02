@@ -19,6 +19,11 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        $middleware->alias([
+            'auth.token' => App\Http\Middleware\ApiTokenAuthMiddleware::class,
+            'ability' => App\Http\Middleware\RequireTokenAbilityMiddleware::class,
+        ]);
+
         $middleware->api(append: [
             App\Http\Middleware\RequestIdMiddleware::class,
             App\Http\Middleware\RequestContextMiddleware::class,
