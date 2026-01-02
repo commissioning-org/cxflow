@@ -170,9 +170,17 @@ class Config:
     include_security: bool = True
     include_metrics: bool = True
     max_file_size: int = 1_000_000
+    max_workers: int = 0
+    include_hidden: bool = False
+    respect_gitignore: bool = True
+    ignore_patterns: List[str] = None  # populated in __post_init__
     verbose: bool = False
     quiet: bool = False
     no_color: bool = False
+
+    def __post_init__(self) -> None:
+        if self.ignore_patterns is None:
+            self.ignore_patterns = []
 
     @classmethod
     def from_file(cls, path: Path) -> 'Config':
@@ -189,6 +197,10 @@ class Config:
                 include_security=data.get("include_security", True),
                 include_metrics=data.get("include_metrics", True),
                 max_file_size=data.get("max_file_size", 1_000_000),
+                max_workers=int(data.get("max_workers", 0) or 0),
+                include_hidden=bool(data.get("include_hidden", False)),
+                respect_gitignore=bool(data.get("respect_gitignore", True)),
+                ignore_patterns=list(data.get("ignore_patterns", []) or []),
                 verbose=data.get("verbose", False),
             )
         except (json.JSONDecodeError, KeyError):
@@ -203,6 +215,10 @@ class Config:
             "include_security": self.include_security,
             "include_metrics": self.include_metrics,
             "max_file_size": self.max_file_size,
+            "max_workers": self.max_workers,
+            "include_hidden": self.include_hidden,
+            "respect_gitignore": self.respect_gitignore,
+            "ignore_patterns": self.ignore_patterns,
             "verbose": self.verbose,
         }
         path.write_text(json.dumps(data, indent=2))
@@ -223,6 +239,16 @@ def _load_config(args: argparse.Namespace) -> Config:
     if hasattr(args, 'no_color') and args.no_color:
         config.no_color = True
         Colors.disable()
+
+    if hasattr(args, 'max_workers') and args.max_workers is not None:
+        config.max_workers = int(args.max_workers)
+    if hasattr(args, 'include_hidden') and args.include_hidden:
+        config.include_hidden = True
+    if hasattr(args, 'no_gitignore') and args.no_gitignore:
+        config.respect_gitignore = False
+    if hasattr(args, 'ignore') and args.ignore:
+        # Allow repeating --ignore; keep existing config ignores too.
+        config.ignore_patterns.extend(list(args.ignore))
 
     return config
 
@@ -304,6 +330,10 @@ def cmd_report(args: argparse.Namespace) -> int:
             repo_path,
             parallel=config.parallel_scan,
             max_file_size_bytes=config.max_file_size,
+            max_workers=config.max_workers,
+            include_hidden=config.include_hidden,
+            respect_gitignore=config.respect_gitignore,
+            ignore_patterns=config.ignore_patterns,
             progress_callback=progress_cb if not config.quiet else None,
         )
 
@@ -398,7 +428,14 @@ def cmd_search(args: argparse.Namespace) -> int:
         if not config.quiet:
             _info("Building search index...")
 
-        scan = scan_repo(repo_path, parallel=config.parallel_scan)
+        scan = scan_repo(
+            repo_path,
+            parallel=config.parallel_scan,
+            max_workers=config.max_workers,
+            include_hidden=config.include_hidden,
+            respect_gitignore=config.respect_gitignore,
+            ignore_patterns=config.ignore_patterns,
+        )
         index = build_index(repo_path, scan, include_symbols=True, include_ngrams=True)
 
         if not config.quiet:
@@ -442,6 +479,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
             repo_path,
             parallel=config.parallel_scan,
             compute_hashes=args.hashes if hasattr(args, 'hashes') else False,
+            max_file_size_bytes=config.max_file_size,
+            max_workers=config.max_workers,
+            include_hidden=config.include_hidden,
+            respect_gitignore=config.respect_gitignore,
+            ignore_patterns=config.ignore_patterns,
         )
 
         _success(f"Scanned {len(scan.files)} files")
@@ -483,7 +525,14 @@ def cmd_security(args: argparse.Namespace) -> int:
         repo_path = _ensure_repo(args, config)
 
         _header("Security Analysis")
-        scan = scan_repo(repo_path, parallel=config.parallel_scan)
+        scan = scan_repo(
+            repo_path,
+            parallel=config.parallel_scan,
+            max_workers=config.max_workers,
+            include_hidden=config.include_hidden,
+            respect_gitignore=config.respect_gitignore,
+            ignore_patterns=config.ignore_patterns,
+        )
 
         severity_threshold = Severity(args.severity) if hasattr(args, 'severity') and args.severity else Severity.LOW
 
@@ -605,7 +654,14 @@ def cmd_deps(args: argparse.Namespace) -> int:
         repo_path = _ensure_repo(args, config)
 
         _header("Dependency Analysis")
-        scan = scan_repo(repo_path, parallel=config.parallel_scan)
+        scan = scan_repo(
+            repo_path,
+            parallel=config.parallel_scan,
+            max_workers=config.max_workers,
+            include_hidden=config.include_hidden,
+            respect_gitignore=config.respect_gitignore,
+            ignore_patterns=config.ignore_patterns,
+        )
         deps = extract_dependencies(repo_path, scan)
 
         if not deps:
@@ -655,6 +711,10 @@ def cmd_config(args: argparse.Namespace) -> int:
             "include_security": config.include_security,
             "include_metrics": config.include_metrics,
             "max_file_size": config.max_file_size,
+            "max_workers": config.max_workers,
+            "include_hidden": config.include_hidden,
+            "respect_gitignore": config.respect_gitignore,
+            "ignore_patterns": config.ignore_patterns,
             "verbose": config.verbose,
         }, indent=2))
 
@@ -700,6 +760,17 @@ Examples:
     p.add_argument("--verbose", "-v", action="store_true", help="Enable verbose output")
     p.add_argument("--quiet", "-q", action="store_true", help="Suppress non-essential output")
     p.add_argument("--no-color", action="store_true", help="Disable colored output")
+
+    # Scan behavior (applies to commands that scan repositories)
+    p.add_argument("--max-workers", type=int, default=None, help="Max scan workers (0=auto)")
+    p.add_argument("--include-hidden", action="store_true", help="Include dotfiles and dot-directories")
+    p.add_argument("--no-gitignore", action="store_true", help="Ignore .gitignore/.research-agentignore")
+    p.add_argument(
+        "--ignore",
+        action="append",
+        default=None,
+        help="Extra ignore glob (repeatable). Example: --ignore '*.lock'",
+    )
 
     sub = p.add_subparsers(dest="cmd", metavar="command")
 

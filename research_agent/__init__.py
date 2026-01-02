@@ -32,7 +32,9 @@ from .scanner import (
     read_text,
     detect_language,
     DEFAULT_IGNORE_DIRS,
+    DEFAULT_IGNORE_PATTERNS,
 )
+from .ignore import IgnoreSpec, IgnoreRule, load_ignore_rules
 from .analysis import (
     RepoSummary,
     CodeMetrics,
@@ -102,6 +104,10 @@ __all__ = [
     "read_text",
     "detect_language",
     "DEFAULT_IGNORE_DIRS",
+    "DEFAULT_IGNORE_PATTERNS",
+    "IgnoreSpec",
+    "IgnoreRule",
+    "load_ignore_rules",
     # Analysis
     "RepoSummary",
     "CodeMetrics",

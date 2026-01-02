@@ -77,6 +77,10 @@ class ResearchConfig:
     parallel_scan: bool = True
     max_file_size: int = 1_000_000
     compute_hashes: bool = False
+    max_workers: int = 0
+    include_hidden: bool = False
+    respect_gitignore: bool = True
+    ignore_patterns: List[str] = field(default_factory=list)
     
     # Analysis options
     include_security: bool = True
@@ -104,6 +108,9 @@ class ResearchConfig:
             cache_dir=Path(os.getenv("RESEARCH_CACHE_DIR", ".cache/research")),
             reports_dir=Path(os.getenv("RESEARCH_REPORTS_DIR", "reports")),
             parallel_scan=os.getenv("RESEARCH_PARALLEL_SCAN", "true").lower() == "true",
+            max_workers=int(os.getenv("RESEARCH_MAX_WORKERS", "0") or "0"),
+            include_hidden=os.getenv("RESEARCH_INCLUDE_HIDDEN", "false").lower() == "true",
+            respect_gitignore=os.getenv("RESEARCH_RESPECT_GITIGNORE", "true").lower() == "true",
             include_security=os.getenv("RESEARCH_INCLUDE_SECURITY", "true").lower() == "true",
             include_metrics=os.getenv("RESEARCH_INCLUDE_METRICS", "true").lower() == "true",
             cache_enabled=os.getenv("RESEARCH_CACHE_ENABLED", "true").lower() == "true",
@@ -122,6 +129,10 @@ class ResearchConfig:
                 cache_dir=Path(data.get("cache_dir", ".cache/research")),
                 reports_dir=Path(data.get("reports_dir", "reports")),
                 parallel_scan=data.get("parallel_scan", True),
+                max_workers=int(data.get("max_workers", 0) or 0),
+                include_hidden=bool(data.get("include_hidden", False)),
+                respect_gitignore=bool(data.get("respect_gitignore", True)),
+                ignore_patterns=list(data.get("ignore_patterns", []) or []),
                 include_security=data.get("include_security", True),
                 include_metrics=data.get("include_metrics", True),
                 cache_enabled=data.get("cache_enabled", True),
@@ -138,6 +149,10 @@ class ResearchConfig:
             "cache_dir": str(self.cache_dir),
             "reports_dir": str(self.reports_dir),
             "parallel_scan": self.parallel_scan,
+            "max_workers": self.max_workers,
+            "include_hidden": self.include_hidden,
+            "respect_gitignore": self.respect_gitignore,
+            "ignore_patterns": self.ignore_patterns,
             "include_security": self.include_security,
             "include_metrics": self.include_metrics,
             "cache_enabled": self.cache_enabled,
@@ -556,6 +571,10 @@ def research_repo(
         parallel=config.parallel_scan,
         max_file_size_bytes=config.max_file_size,
         compute_hashes=config.compute_hashes,
+        max_workers=config.max_workers,
+        include_hidden=config.include_hidden,
+        respect_gitignore=config.respect_gitignore,
+        ignore_patterns=config.ignore_patterns,
         progress_callback=scan_progress,
     )
     
