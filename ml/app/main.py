@@ -20,6 +20,63 @@ Environment Variables:
 
 from __future__ import annotations
 
+from fastapi import FastAPI
+
+from app.api import (
+    analysis_router,
+    experiments_router,
+    feature_engineering_router,
+    health_router,
+    metrics_router,
+    models_router,
+    powerbi_router,
+    prediction_router,
+    tfos_router,
+    timeseries_router,
+    training_router,
+)
+from app.core.middleware import request_middleware
+from app.core.state import lifespan
+
+
+def create_app() -> FastAPI:
+    app = FastAPI(
+        title="AutoML Service",
+        version="2.0",
+        description="Enhanced AutoML with tuning, explainability, registry, and experiment tracking",
+        lifespan=lifespan,
+    )
+
+    app.middleware("http")(request_middleware)
+
+    # Routers (backward-compatible routes preserved)
+    app.include_router(health_router)
+    app.include_router(training_router)
+    app.include_router(prediction_router)
+    app.include_router(models_router)
+    app.include_router(analysis_router)
+    app.include_router(experiments_router)
+    app.include_router(timeseries_router)
+    app.include_router(metrics_router)
+    app.include_router(feature_engineering_router)
+    app.include_router(tfos_router)
+    app.include_router(powerbi_router)
+
+    return app
+
+
+app = create_app()
+
+
+# ---------------------------------------------------------------------------
+# Legacy monolith (disabled)
+#
+# We keep the original implementation here for reference while the refactor
+# settles, but it is not executed.
+# ---------------------------------------------------------------------------
+
+LEGACY_MONOLITH = r'''
+
 import asyncio
 import hashlib
 import json
@@ -81,6 +138,7 @@ from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 from app.config import settings
+from app.api import feature_engineering_router
 
 # ---------------------------------------------------------------------------
 # Configuration & Logging
@@ -107,6 +165,16 @@ EXPERIMENTS_INDEX_PATH = EXPERIMENTS_DIR / "experiments.json"
 # Simple in-memory caches
 _MODEL_CACHE: dict[str, dict[str, Any]] = {}
 _META_CACHE: dict[str, dict[str, Any]] = {}
+
+# Basic counters (in-memory)
+_stats: dict[str, float] = {
+    "requests_total": 0.0,
+    "requests_inflight": 0.0,
+    "model_cache_hits": 0.0,
+    "model_cache_misses": 0.0,
+    "meta_cache_hits": 0.0,
+    "meta_cache_misses": 0.0,
+}
 
 # Rate limiting (in-memory)
 _rate_buckets: dict[str, deque[float]] = {}
@@ -147,6 +215,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Extra routers (keep legacy endpoints below)
+app.include_router(feature_engineering_router)
+
 
 @app.middleware("http")
 async def request_middleware(request: Request, call_next):
@@ -181,11 +252,15 @@ async def request_middleware(request: Request, call_next):
 
     request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     start = time.time()
+    _stats["requests_total"] += 1.0
+    _stats["requests_inflight"] += 1.0
     try:
         response: Response = await call_next(request)
     except Exception:
         logger.exception("Unhandled exception", extra={"request_id": request_id})
         raise
+    finally:
+        _stats["requests_inflight"] = max(0.0, _stats["requests_inflight"] - 1.0)
     response.headers["x-request-id"] = request_id
     response.headers["x-response-time-ms"] = f"{(time.time() - start) * 1000:.2f}"
     return response
@@ -206,6 +281,7 @@ class JobStatus(str, Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class TrainRequest(BaseModel):
@@ -719,7 +795,9 @@ def _get_model_from_cache(model_id: str) -> Any:
     if settings.enable_cache:
         cached = _MODEL_CACHE.get(model_id)
         if cached and cached.get("mtime") == mtime:
+            _stats["model_cache_hits"] += 1.0
             return cached["model"]
+        _stats["model_cache_misses"] += 1.0
 
     model = joblib.load(art.model_path)
     if settings.enable_cache:
@@ -736,7 +814,9 @@ def _get_meta_from_cache(model_id: str) -> dict[str, Any]:
     if settings.enable_cache:
         cached = _META_CACHE.get(model_id)
         if cached and cached.get("mtime") == mtime:
+            _stats["meta_cache_hits"] += 1.0
             return cached["meta"]
+        _stats["meta_cache_misses"] += 1.0
 
     meta = json.loads(art.meta_path.read_text())
     if settings.enable_cache:
@@ -906,6 +986,8 @@ def _run_training(
 
     for idx, (name, est, param_grid) in enumerate(candidates):
         if job_id:
+            if _training_jobs.get(job_id, {}).get("status") == JobStatus.CANCELLED.value:
+                raise RuntimeError("Training cancelled")
             _training_jobs[job_id]["progress"] = (idx + 1) / total_candidates * 0.8
 
         try:
@@ -1207,6 +1289,42 @@ def train_status(job_id: str):
         created_at=job.get("created_at"),
         completed_at=job.get("completed_at"),
     )
+
+
+@app.get("/train/jobs")
+def list_training_jobs(
+    status: str | None = Query(None, description="Filter by status"),
+    limit: int = Query(200, ge=1, le=5000),
+):
+    """List training jobs currently known to this instance."""
+    items = []
+    for jid, job in _training_jobs.items():
+        if status and job.get("status") != status:
+            continue
+        items.append({"job_id": jid, **job})
+    items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+    return {"jobs": items[:limit], "total": len(items)}
+
+
+@app.post("/train/cancel/{job_id}")
+def cancel_training_job(job_id: str):
+    """Best-effort cancellation for async training.
+
+    Notes:
+      - The current implementation checks cancellation between candidate models.
+      - If a single candidate is currently fitting, cancellation takes effect after that fit completes.
+    """
+    if job_id not in _training_jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    job = _training_jobs[job_id]
+    if job.get("status") in (JobStatus.COMPLETED.value, JobStatus.FAILED.value):
+        return {"ok": False, "job_id": job_id, "status": job.get("status"), "message": "Job already finished"}
+
+    job["status"] = JobStatus.CANCELLED.value
+    job["completed_at"] = datetime.now(timezone.utc).isoformat()
+    job["error"] = "Cancelled by user"
+    return {"ok": True, "job_id": job_id, "status": JobStatus.CANCELLED.value}
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -1623,9 +1741,75 @@ def metrics():
         "# HELP automl_jobs_failed Failed training jobs",
         "# TYPE automl_jobs_failed counter",
         f"automl_jobs_failed {jobs_failed}",
+        "# HELP automl_requests_total Total HTTP requests",
+        "# TYPE automl_requests_total counter",
+        f"automl_requests_total {_stats['requests_total']}",
+        "# HELP automl_requests_inflight Current in-flight HTTP requests",
+        "# TYPE automl_requests_inflight gauge",
+        f"automl_requests_inflight {_stats['requests_inflight']}",
+        "# HELP automl_model_cache_hits Model cache hits",
+        "# TYPE automl_model_cache_hits counter",
+        f"automl_model_cache_hits {_stats['model_cache_hits']}",
+        "# HELP automl_model_cache_misses Model cache misses",
+        "# TYPE automl_model_cache_misses counter",
+        f"automl_model_cache_misses {_stats['model_cache_misses']}",
+        "# HELP automl_meta_cache_hits Meta cache hits",
+        "# TYPE automl_meta_cache_hits counter",
+        f"automl_meta_cache_hits {_stats['meta_cache_hits']}",
+        "# HELP automl_meta_cache_misses Meta cache misses",
+        "# TYPE automl_meta_cache_misses counter",
+        f"automl_meta_cache_misses {_stats['meta_cache_misses']}",
     ]
 
     return StreamingResponse(iter(["\n".join(lines) + "\n"]), media_type="text/plain")
+
+
+@app.get("/models/{model_id}/card")
+def model_card(model_id: str):
+    """Return a lightweight model card summary (JSON) for observability/governance."""
+    art = _artifacts(model_id)
+    if not art.meta_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    meta = _get_meta_from_cache(model_id)
+    importance = None
+    if art.importance_path.exists():
+        try:
+            importance = json.loads(art.importance_path.read_text())
+        except Exception:
+            importance = None
+
+    top_features = None
+    if isinstance(importance, dict) and importance:
+        top_features = list(importance.items())[:20]
+
+    registry = _load_registry()
+    reg = registry.get("by_id", {}).get(model_id)
+
+    return {
+        "model_id": meta.get("model_id"),
+        "model_name": meta.get("model_name"),
+        "description": meta.get("description"),
+        "problem": meta.get("problem"),
+        "metric": meta.get("metric"),
+        "score": meta.get("score"),
+        "cv_score": meta.get("cv_score"),
+        "cv_std": meta.get("cv_std"),
+        "selected_model": meta.get("selected"),
+        "created_at": meta.get("created_at"),
+        "tags": meta.get("tags", []),
+        "data_hash": meta.get("data_hash"),
+        "feature_count": len(meta.get("features", []) or []),
+        "features": meta.get("features", []),
+        "top_importance": top_features,
+        "registry": reg,
+        "artifacts": {
+            "model_path": str(art.model_path),
+            "meta_path": str(art.meta_path),
+            "importance_path": str(art.importance_path) if art.importance_path.exists() else None,
+            "shap_path": str(art.shap_path) if art.shap_path.exists() else None,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -2556,3 +2740,5 @@ async def fabric_generate_training_workspaces(req: PBITrainingWorkspacesRequest)
             }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+'''
