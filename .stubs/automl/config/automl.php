@@ -43,5 +43,9 @@ return [
         // - both: send both
         'mode' => env('AUTOML_WEBHOOK_MODE', 'multiple'),
         'single_event' => env('AUTOML_WEBHOOK_SINGLE_EVENT', 'ml.data'),
+
+        // Optional: redact sensitive keys from webhook payloads
+        'redact_keys' => array_filter(explode(',', (string) env('AUTOML_WEBHOOK_REDACT_KEYS', ''))),
+        'truncate_length' => (int) env('AUTOML_WEBHOOK_TRUNCATE_LENGTH', 0),
     ],
 ];

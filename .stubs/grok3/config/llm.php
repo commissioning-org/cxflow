@@ -26,5 +26,11 @@ return [
 
         // Safety + defaults
         'timeout_seconds' => (int) env('GITHUB_MODELS_TIMEOUT_SECONDS', 60),
+
+        // Retry configuration for transient errors (429, 5xx)
+        'retries' => (int) env('GITHUB_MODELS_RETRIES', 2),
+        'retry_base_delay_ms' => (int) env('GITHUB_MODELS_RETRY_BASE_DELAY_MS', 250),
+        'retry_max_delay_ms' => (int) env('GITHUB_MODELS_RETRY_MAX_DELAY_MS', 2000),
+        'retry_jitter_ms' => (int) env('GITHUB_MODELS_RETRY_JITTER_MS', 150),
     ],
 ];

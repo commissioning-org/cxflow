@@ -51,8 +51,9 @@ final class MlAutomate extends Command
         }
 
         $resultKey = 'ml:result:' . Str::uuid();
-        Cache::put($resultKey, ['ok' => false, 'pending' => true], now()->addMinutes(10));
-        RunMlAutomation::dispatch($name, $resultKey, $overrides);
+        $traceId = Str::uuid();
+        Cache::put($resultKey, ['ok' => false, 'pending' => true, 'trace_id' => $traceId], now()->addMinutes(10));
+        RunMlAutomation::dispatch($name, $resultKey, $overrides, $traceId);
 
         $this->line($resultKey);
         return self::SUCCESS;

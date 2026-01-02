@@ -18,6 +18,11 @@ return [
 
     'enabled' => (bool) env('ML_AUTOMATION_ENABLED', false),
 
+    // API endpoints (internal only)
+    'api' => [
+        'enabled' => (bool) env('ML_AUTOMATION_API_ENABLED', false),
+    ],
+
     // Storage (local disk by default). Artifacts are stored under storage/app/ml
     'storage' => [
         'disk' => env('ML_AUTOMATION_STORAGE_DISK', env('FILESYSTEM_DISK', 'local')),
@@ -85,5 +90,9 @@ return [
 
         // If true, also emits a single aggregated run payload on completion/failure.
         'single_summary' => (bool) env('ML_AUTOMATION_WEBHOOK_SINGLE_SUMMARY', false),
+
+        // Optional: redact sensitive keys from webhook payloads
+        'redact_keys' => array_filter(explode(',', (string) env('ML_AUTOMATION_WEBHOOK_REDACT_KEYS', ''))),
+        'truncate_length' => (int) env('ML_AUTOMATION_WEBHOOK_TRUNCATE_LENGTH', 0),
     ],
 ];
