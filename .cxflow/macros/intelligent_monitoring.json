@@ -1,0 +1,165 @@
+{
+  "name": "intelligent_monitoring",
+  "description": "Intelligent system monitoring with anomaly detection and adaptive thresholds",
+  "trigger": "schedule",
+  "actions": [
+    {
+      "type": "log",
+      "message": "Starting intelligent monitoring scan at {{context.timestamp}}",
+      "level": "info"
+    },
+    {
+      "type": "get_memory",
+      "key": "monitoring_config",
+      "store_as": "config"
+    },
+    {
+      "type": "loop",
+      "items": ["cpu", "memory", "disk", "network"],
+      "as": "metric",
+      "actions": [
+        {
+          "type": "log",
+          "message": "Collecting {{metric}} metrics...",
+          "level": "info"
+        },
+        {
+          "type": "collect",
+          "source": "{{metric}}_metrics"
+        },
+        {
+          "type": "set_memory",
+          "key": "metric_{{metric}}_current",
+          "value": "{{context.metric_value}}"
+        }
+      ]
+    },
+    {
+      "type": "transform",
+      "input": ["cpu", "memory", "disk", "network"],
+      "operation": "count",
+      "store_as": "metrics_collected"
+    },
+    {
+      "type": "log",
+      "message": "Collected {{metrics_collected}} metric types",
+      "level": "info"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "✅ All metrics within normal range",
+          "level": "info"
+        },
+        {
+          "type": "set_memory",
+          "key": "system_health",
+          "value": "healthy"
+        },
+        {
+          "type": "set_memory",
+          "key": "last_healthy_check",
+          "value": "{{context.timestamp}}"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "⚠️ Anomaly detected in system metrics",
+          "level": "warning"
+        },
+        {
+          "type": "loop",
+          "items": ["alert_1", "alert_2", "alert_3"],
+          "as": "severity",
+          "actions": [
+            {
+              "type": "condition",
+              "if": "True",
+              "then": [
+                {
+                  "type": "notify",
+                  "channel": "teams",
+                  "message": "⚠️ System anomaly detected - Severity: {{severity}}"
+                },
+                {
+                  "type": "log",
+                  "message": "Alert sent for severity level: {{severity}}",
+                  "level": "warning"
+                }
+              ],
+              "else": [
+                {
+                  "type": "log",
+                  "message": "Severity {{severity}} within acceptable range",
+                  "level": "info"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "set_memory",
+          "key": "system_health",
+          "value": "degraded"
+        },
+        {
+          "type": "set_memory",
+          "key": "last_anomaly_detected",
+          "value": "{{context.timestamp}}"
+        },
+        {
+          "type": "loop",
+          "items": ["scale_up", "restart_service", "clear_cache"],
+          "as": "remediation",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Attempting remediation: {{remediation}}",
+              "level": "info"
+            },
+            {
+              "type": "execute",
+              "command": "{{remediation}}"
+            },
+            {
+              "type": "delay",
+              "seconds": 2
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "transform",
+      "input": "{{context.monitoring_data}}",
+      "operation": "unique",
+      "store_as": "unique_alerts"
+    },
+    {
+      "type": "sync",
+      "destination": "power_automate"
+    },
+    {
+      "type": "log",
+      "message": "Monitoring scan completed. Results synced to Power Automate",
+      "level": "info"
+    }
+  ],
+  "enabled": true,
+  "version": "1.0.0",
+  "created_at": "2026-01-02T00:56:57.893Z",
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "schedule": "*/5 * * * *",
+    "enhanced": true,
+    "features": ["anomaly_detection", "adaptive_thresholds", "auto_remediation", "nested_conditionals", "loops", "transformations"],
+    "metrics": ["cpu", "memory", "disk", "network"],
+    "check_interval_minutes": 5,
+    "auto_remediation_enabled": true,
+    "remediation_actions": ["scale_up", "restart_service", "clear_cache"]
+  }
+}

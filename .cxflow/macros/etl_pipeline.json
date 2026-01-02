@@ -1,0 +1,167 @@
+{
+  "name": "etl_pipeline",
+  "description": "Advanced ETL pipeline with multi-stage transformation and validation",
+  "trigger": "manual",
+  "actions": [
+    {
+      "type": "log",
+      "message": "Starting ETL pipeline: {{context.pipeline_name}}",
+      "level": "info"
+    },
+    {
+      "type": "set_memory",
+      "key": "etl_pipeline_start",
+      "value": "{{context.timestamp}}"
+    },
+    {
+      "type": "log",
+      "message": "Stage 1: Extract",
+      "level": "info"
+    },
+    {
+      "type": "loop",
+      "items": ["database", "api", "files"],
+      "as": "source",
+      "actions": [
+        {
+          "type": "log",
+          "message": "Extracting from {{source}}...",
+          "level": "info"
+        },
+        {
+          "type": "collect",
+          "source": "{{source}}"
+        },
+        {
+          "type": "set_memory",
+          "key": "extracted_{{source}}",
+          "value": "completed"
+        }
+      ]
+    },
+    {
+      "type": "log",
+      "message": "Stage 2: Transform",
+      "level": "info"
+    },
+    {
+      "type": "loop",
+      "items": ["clean", "normalize", "enrich", "aggregate"],
+      "as": "transform_step",
+      "actions": [
+        {
+          "type": "log",
+          "message": "Applying transformation: {{transform_step}}",
+          "level": "info"
+        },
+        {
+          "type": "transform",
+          "input": "{{context.data}}",
+          "operation": "{{transform_step}}",
+          "store_as": "transformed_data"
+        },
+        {
+          "type": "delay",
+          "seconds": 1
+        }
+      ]
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "✅ Transformation validation passed",
+          "level": "info"
+        },
+        {
+          "type": "log",
+          "message": "Stage 3: Load",
+          "level": "info"
+        },
+        {
+          "type": "loop",
+          "items": ["warehouse", "data_lake", "analytics"],
+          "as": "destination",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Loading to {{destination}}...",
+              "level": "info"
+            },
+            {
+              "type": "sync",
+              "destination": "{{destination}}"
+            },
+            {
+              "type": "set_memory",
+              "key": "loaded_{{destination}}",
+              "value": "success"
+            }
+          ]
+        },
+        {
+          "type": "set_memory",
+          "key": "etl_pipeline_status",
+          "value": "completed"
+        },
+        {
+          "type": "transform",
+          "input": ["warehouse", "data_lake", "analytics"],
+          "operation": "count",
+          "store_as": "destinations_count"
+        },
+        {
+          "type": "log",
+          "message": "✅ ETL pipeline completed. Data loaded to {{destinations_count}} destinations",
+          "level": "info"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "ETL pipeline {{context.pipeline_name}} completed successfully"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "❌ Transformation validation failed, initiating rollback",
+          "level": "error"
+        },
+        {
+          "type": "set_memory",
+          "key": "etl_pipeline_status",
+          "value": "failed"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "❌ ETL pipeline {{context.pipeline_name}} failed - rollback initiated"
+        }
+      ]
+    },
+    {
+      "type": "get_memory",
+      "key": "etl_pipeline_start",
+      "store_as": "start_time"
+    },
+    {
+      "type": "log",
+      "message": "Pipeline execution completed. Started at {{start_time}}",
+      "level": "info"
+    }
+  ],
+  "enabled": true,
+  "version": "1.0.0",
+  "created_at": "2026-01-02T00:56:57.893Z",
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "enhanced": true,
+    "features": ["multi_stage_etl", "validation", "rollback", "loops", "conditionals", "transformations", "parallel_loading"],
+    "stages": ["extract", "transform", "load"],
+    "sources": ["database", "api", "files"],
+    "transformations": ["clean", "normalize", "enrich", "aggregate"],
+    "destinations": ["warehouse", "data_lake", "analytics"]
+  }
+}

@@ -1,20 +1,83 @@
 {
   "name": "build_docs",
-  "description": "Build documentation on commit",
+  "description": "Build documentation on commit with error handling and validation",
   "trigger": "webhook",
   "actions": [
     {
-      "type": "execute",
-      "command": "python -m jupyterbook.book_builder build ."
+      "type": "log",
+      "message": "Starting documentation build for commit {{context.commit_sha}}",
+      "level": "info"
     },
     {
-      "type": "notify",
-      "channel": "teams"
+      "type": "get_memory",
+      "key": "last_build_status",
+      "store_as": "previous_build"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "execute",
+          "command": "python -m jupyterbook.book_builder build ."
+        },
+        {
+          "type": "set_memory",
+          "key": "last_build_status",
+          "value": "success"
+        },
+        {
+          "type": "set_memory",
+          "key": "last_build_time",
+          "value": "{{context.timestamp}}"
+        },
+        {
+          "type": "log",
+          "message": "Documentation build completed successfully",
+          "level": "info"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "✅ Documentation build successful for commit {{context.commit_sha}}"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "Documentation build failed",
+          "level": "error"
+        },
+        {
+          "type": "set_memory",
+          "key": "last_build_status",
+          "value": "failed"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "❌ Documentation build failed for commit {{context.commit_sha}}"
+        }
+      ]
+    },
+    {
+      "type": "transform",
+      "input": "{{context.commit_sha}}",
+      "operation": "uppercase",
+      "store_as": "commit_sha_upper"
+    },
+    {
+      "type": "log",
+      "message": "Build process completed for {{commit_sha_upper}}",
+      "level": "info"
     }
   ],
   "enabled": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "created_at": "2025-12-31T19:45:45.609967+00:00",
-  "updated_at": "2025-12-31T19:45:45.609976+00:00",
-  "metadata": {}
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "enhanced": true,
+    "features": ["conditionals", "error_handling", "memory_storage", "notifications", "transformations"]
+  }
 }

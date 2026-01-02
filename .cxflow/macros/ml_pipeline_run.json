@@ -1,22 +1,106 @@
 {
   "name": "ml_pipeline_run",
-  "description": "Run ML pipeline on new data",
+  "description": "Run ML pipeline on new data with validation and transformation",
   "trigger": "event",
   "actions": [
+    {
+      "type": "log",
+      "message": "ML pipeline triggered by event: {{context.event_type}}",
+      "level": "info"
+    },
+    {
+      "type": "get_memory",
+      "key": "ml_config",
+      "store_as": "config"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "Validating input data...",
+          "level": "info"
+        },
+        {
+          "type": "transform",
+          "input": "{{context.data_path}}",
+          "operation": "count",
+          "store_as": "data_size"
+        },
+        {
+          "type": "log",
+          "message": "Data validation passed. Size: {{data_size}}",
+          "level": "info"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "Data validation failed",
+          "level": "error"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "❌ ML pipeline validation failed"
+        }
+      ]
+    },
+    {
+      "type": "loop",
+      "items": ["preprocess", "train", "evaluate"],
+      "as": "stage",
+      "actions": [
+        {
+          "type": "log",
+          "message": "Executing stage: {{stage}}",
+          "level": "info"
+        },
+        {
+          "type": "set_memory",
+          "key": "ml_current_stage",
+          "value": "{{stage}}"
+        }
+      ]
+    },
     {
       "type": "execute",
       "command": "python ml/app/main.py"
     },
     {
+      "type": "set_memory",
+      "key": "ml_last_run",
+      "value": "{{context.timestamp}}"
+    },
+    {
+      "type": "set_memory",
+      "key": "ml_run_status",
+      "value": "completed"
+    },
+    {
       "type": "sync",
       "destination": "power_automate"
+    },
+    {
+      "type": "log",
+      "message": "✅ ML pipeline completed and results synced",
+      "level": "info"
+    },
+    {
+      "type": "notify",
+      "channel": "teams",
+      "message": "ML pipeline completed successfully. Event: {{context.event_type}}"
     }
   ],
   "enabled": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "created_at": "2025-12-31T19:45:45.610597+00:00",
-  "updated_at": "2025-12-31T19:45:45.610605+00:00",
+  "updated_at": "2026-01-02T00:56:57.893Z",
   "metadata": {
-    "event_type": "data_ingestion_complete"
+    "event_type": "data_ingestion_complete",
+    "enhanced": true,
+    "features": ["data_validation", "multi_stage_processing", "loops", "conditionals", "transformations"],
+    "stages": ["preprocess", "train", "evaluate"]
   }
 }

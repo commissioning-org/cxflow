@@ -48,9 +48,12 @@ php ingestion/cx_orchestrate.php "$CX_INGESTION_URI"
 **Documentation**: 
 - Enhanced Automation: [`docs/ENHANCED_AUTOMATION.md`](docs/ENHANCED_AUTOMATION.md)
 - Workflow Features: [`docs/CXFLOW_ENHANCED.md`](docs/CXFLOW_ENHANCED.md)
+- **Enhanced Macros: [`docs/ENHANCED_MACROS.md`](docs/ENHANCED_MACROS.md)** ⭐ NEW
 - Enhancement Summary: [`docs/ENHANCEMENT_SUMMARY.md`](docs/ENHANCEMENT_SUMMARY.md)
 
-**Examples**: Run `python workflows/examples/enhanced_usage.py` for comprehensive demos
+**Examples**: 
+- Run `python workflows/examples/enhanced_usage.py` for comprehensive demos
+- **Run `python workflows/demo_enhanced_macros.py` for macro demonstrations** ⭐ NEW
 
 ## What you get
 

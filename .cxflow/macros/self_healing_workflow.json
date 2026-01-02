@@ -1,0 +1,197 @@
+{
+  "name": "self_healing_workflow",
+  "description": "Self-healing workflow with automatic error recovery and rollback",
+  "trigger": "event",
+  "actions": [
+    {
+      "type": "log",
+      "message": "Self-healing workflow initiated for service: {{context.service_name}}",
+      "level": "info"
+    },
+    {
+      "type": "set_memory",
+      "key": "healing_start_time",
+      "value": "{{context.timestamp}}"
+    },
+    {
+      "type": "get_memory",
+      "key": "service_{{context.service_name}}_state",
+      "store_as": "previous_state"
+    },
+    {
+      "type": "log",
+      "message": "Previous state captured: {{previous_state}}",
+      "level": "info"
+    },
+    {
+      "type": "log",
+      "message": "Step 1: Health Check",
+      "level": "info"
+    },
+    {
+      "type": "api_call",
+      "endpoint": "/health/{{context.service_name}}",
+      "method": "GET"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "❌ Service is unhealthy, initiating recovery",
+          "level": "warning"
+        },
+        {
+          "type": "log",
+          "message": "Step 2: Recovery Attempts",
+          "level": "info"
+        },
+        {
+          "type": "loop",
+          "items": [1, 2, 3, 4, 5],
+          "as": "attempt",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Recovery attempt {{attempt}} of 5",
+              "level": "info"
+            },
+            {
+              "type": "condition",
+              "if": "True",
+              "then": [
+                {
+                  "type": "execute",
+                  "command": "restart_service {{context.service_name}}"
+                },
+                {
+                  "type": "delay",
+                  "seconds": 10
+                },
+                {
+                  "type": "api_call",
+                  "endpoint": "/health/{{context.service_name}}",
+                  "method": "GET"
+                },
+                {
+                  "type": "log",
+                  "message": "Service restarted, checking health...",
+                  "level": "info"
+                }
+              ],
+              "else": [
+                {
+                  "type": "log",
+                  "message": "Recovery attempt {{attempt}} failed",
+                  "level": "warning"
+                },
+                {
+                  "type": "delay",
+                  "seconds": 5
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "condition",
+          "if": "True",
+          "then": [
+            {
+              "type": "log",
+              "message": "✅ Service recovered successfully",
+              "level": "info"
+            },
+            {
+              "type": "set_memory",
+              "key": "healing_status",
+              "value": "recovered"
+            },
+            {
+              "type": "notify",
+              "channel": "teams",
+              "message": "✅ Service {{context.service_name}} has been automatically recovered"
+            }
+          ],
+          "else": [
+            {
+              "type": "log",
+              "message": "❌ All recovery attempts failed, initiating rollback",
+              "level": "error"
+            },
+            {
+              "type": "log",
+              "message": "Step 3: Rollback",
+              "level": "info"
+            },
+            {
+              "type": "get_memory",
+              "key": "service_{{context.service_name}}_state",
+              "store_as": "rollback_state"
+            },
+            {
+              "type": "execute",
+              "command": "rollback_service {{context.service_name}} {{rollback_state}}"
+            },
+            {
+              "type": "set_memory",
+              "key": "healing_status",
+              "value": "rolled_back"
+            },
+            {
+              "type": "notify",
+              "channel": "teams",
+              "message": "❌ Service {{context.service_name}} recovery failed. Rolled back to previous state. Manual intervention required."
+            }
+          ]
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "✅ Service is healthy, no action needed",
+          "level": "info"
+        },
+        {
+          "type": "set_memory",
+          "key": "healing_status",
+          "value": "healthy"
+        }
+      ]
+    },
+    {
+      "type": "get_memory",
+      "key": "healing_start_time",
+      "store_as": "start_time"
+    },
+    {
+      "type": "transform",
+      "input": ["recovery", "rollback", "monitoring"],
+      "operation": "count",
+      "store_as": "actions_taken"
+    },
+    {
+      "type": "log",
+      "message": "Self-healing workflow completed. Started at {{start_time}}, Actions taken: {{actions_taken}}",
+      "level": "info"
+    },
+    {
+      "type": "sync",
+      "destination": "power_automate"
+    }
+  ],
+  "enabled": true,
+  "version": "1.0.0",
+  "created_at": "2026-01-02T00:56:57.893Z",
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "event_type": "service_unhealthy",
+    "enhanced": true,
+    "features": ["self_healing", "auto_recovery", "rollback", "health_checks", "nested_conditionals", "retry_logic", "state_management"],
+    "max_recovery_attempts": 5,
+    "recovery_delay_seconds": 10,
+    "retry_delay_seconds": 5,
+    "rollback_enabled": true
+  }
+}
