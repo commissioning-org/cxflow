@@ -571,6 +571,227 @@ class SupersetClient
 
         return $this->request('GET', '/api/v1/security/users/', query: $query);
     }
+
+    // =========================================================================
+    // Bulk Operations
+    // =========================================================================
+
+    /**
+     * Bulk delete dashboards.
+     */
+    public function bulkDeleteDashboards(array $ids): array
+    {
+        return $this->request('DELETE', '/api/v1/dashboard/', ['ids' => $ids]);
+    }
+
+    /**
+     * Bulk delete charts.
+     */
+    public function bulkDeleteCharts(array $ids): array
+    {
+        return $this->request('DELETE', '/api/v1/chart/', ['ids' => $ids]);
+    }
+
+    /**
+     * Bulk delete datasets.
+     */
+    public function bulkDeleteDatasets(array $ids): array
+    {
+        return $this->request('DELETE', '/api/v1/dataset/', ['ids' => $ids]);
+    }
+
+    // =========================================================================
+    // Advanced Features
+    // =========================================================================
+
+    /**
+     * Make API request with retry logic.
+     */
+    protected function requestWithRetry(
+        string $method,
+        string $endpoint,
+        array $data = [],
+        array $query = [],
+        int $maxRetries = 3
+    ): array {
+        $attempt = 0;
+        $lastException = null;
+
+        while ($attempt < $maxRetries) {
+            try {
+                return $this->request($method, $endpoint, $data, $query);
+            } catch (SupersetException $e) {
+                $lastException = $e;
+                $attempt++;
+
+                if ($attempt >= $maxRetries) {
+                    throw $e;
+                }
+
+                // Exponential backoff
+                usleep((int) (100000 * pow(2, $attempt)));
+
+                Log::warning('Retrying Superset request', [
+                    'attempt' => $attempt,
+                    'method' => $method,
+                    'endpoint' => $endpoint,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        throw $lastException;
+    }
+
+    /**
+     * Get dashboard filters metadata.
+     */
+    public function getDashboardFilters(int $dashboardId): array
+    {
+        return $this->request('GET', "/api/v1/dashboard/{$dashboardId}/filters");
+    }
+
+    /**
+     * Favorite a dashboard.
+     */
+    public function favoriteDashboard(int $dashboardId): array
+    {
+        return $this->request('POST', "/api/v1/dashboard/{$dashboardId}/favorites");
+    }
+
+    /**
+     * Unfavorite a dashboard.
+     */
+    public function unfavoriteDashboard(int $dashboardId): array
+    {
+        return $this->request('DELETE', "/api/v1/dashboard/{$dashboardId}/favorites");
+    }
+
+    /**
+     * Duplicate a dashboard.
+     */
+    public function duplicateDashboard(int $dashboardId, string $newTitle): array
+    {
+        $dashboard = $this->getDashboard($dashboardId);
+        $result = $dashboard['result'] ?? $dashboard;
+
+        $newDashboard = [
+            'dashboard_title' => $newTitle,
+            'slug' => null, // Let Superset generate new slug
+            'json_metadata' => $result['json_metadata'] ?? '{}',
+            'position_json' => $result['position_json'] ?? '{}',
+            'css' => $result['css'] ?? '',
+        ];
+
+        return $this->createDashboard($newDashboard);
+    }
+
+    /**
+     * Get chart's underlying SQL.
+     */
+    public function getChartSql(int $chartId): array
+    {
+        return $this->request('GET', "/api/v1/chart/{$chartId}/data/");
+    }
+
+    /**
+     * Import dashboards from zip file.
+     */
+    public function importDashboards(string $zipContent, bool $overwrite = false): array
+    {
+        $this->ensureAuthenticated();
+
+        $response = $this->client()
+            ->attach('formData', $zipContent, 'dashboards.zip')
+            ->post('/api/v1/dashboard/import/', [
+                'overwrite' => $overwrite,
+            ]);
+
+        if (!$response->successful()) {
+            throw new SupersetException('Import failed: ' . $response->body());
+        }
+
+        return $response->json() ?? [];
+    }
+
+    /**
+     * Get available database drivers.
+     */
+    public function getAvailableDatabaseDrivers(): array
+    {
+        return $this->request('GET', '/api/v1/database/available/');
+    }
+
+    /**
+     * Validate SQL query.
+     */
+    public function validateSql(int $databaseId, string $sql, ?string $schema = null): array
+    {
+        return $this->request('POST', '/api/v1/sqllab/validate/', [
+            'database_id' => $databaseId,
+            'sql' => $sql,
+            'schema' => $schema,
+        ]);
+    }
+
+    /**
+     * Get query history.
+     */
+    public function getQueryHistory(int $page = 0, int $pageSize = 25): array
+    {
+        $query = [
+            'q' => json_encode([
+                'page' => $page,
+                'page_size' => $pageSize,
+            ]),
+        ];
+
+        return $this->request('GET', '/api/v1/query/', query: $query);
+    }
+
+    /**
+     * Get dashboard thumbnail URL.
+     */
+    public function getDashboardThumbnailUrl(int $dashboardId): string
+    {
+        return "{$this->baseUrl}/api/v1/dashboard/{$dashboardId}/thumbnail/";
+    }
+
+    /**
+     * Get chart thumbnail URL.
+     */
+    public function getChartThumbnailUrl(int $chartId): string
+    {
+        return "{$this->baseUrl}/api/v1/chart/{$chartId}/thumbnail/";
+    }
+
+    /**
+     * Get health check status.
+     */
+    public function health(): array
+    {
+        try {
+            return Http::baseUrl($this->baseUrl)
+                ->timeout(5)
+                ->get('/health')
+                ->json() ?? [];
+        } catch (\Exception $e) {
+            return ['status' => 'unhealthy', 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Get Superset version info.
+     */
+    public function version(): array
+    {
+        try {
+            $this->ensureAuthenticated();
+            return $this->request('GET', '/api/v1/version');
+        } catch (\Exception $e) {
+            return ['error' => $e->getMessage()];
+        }
+    }
 }
 
 
