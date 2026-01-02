@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace App\Services\MlAutomation;
 
+use App\Models\MlDataset;
+use App\Models\MlModel;
+use App\Models\MlRun;
 use App\Services\Assistant\AssistantService;
 use App\Services\Automl\AutomlClient;
 use Illuminate\Support\Facades\Storage;
@@ -26,14 +29,16 @@ final class MlAutomationPipeline
     }
 
     /**
+     * @param array<string, mixed> $overrides
      * @return array<string, mixed>
      */
-    public function run(string $pipeline = 'default', array $overrides = []): array
+    public function run(string $pipeline = 'default', array $overrides = [], ?string $traceId = null): array
     {
         if (!(bool) config('ml_automation.enabled', false)) {
             return ['ok' => false, 'error' => 'disabled'];
         }
 
+        $traceId = $traceId ?? TraceHelper::generate();
         $runEvents = [];
 
         /** @var array<string, mixed> $pipelines */
@@ -42,43 +47,81 @@ final class MlAutomationPipeline
         $cfg = (array) ($pipelines[$pipeline] ?? []);
         $cfg = array_replace_recursive($cfg, $overrides);
 
-        $runId = (string) Str::uuid();
-        $startedAt = now()->toIso8601String();
+        $runUuid = (string) Str::uuid();
+        $startedAt = now();
 
-        $this->emit($runEvents, 'ml.run.started', [
-            'run_id' => $runId,
+        // Create MlRun record
+        $mlRun = MlRun::create([
+            'run_uuid' => $runUuid,
             'pipeline' => $pipeline,
+            'kind' => 'train',
+            'status' => 'running',
+            'payload' => [
+                'trace_id' => $traceId,
+                'pipeline' => $pipeline,
+                'overrides' => $overrides,
+            ],
             'started_at' => $startedAt,
         ]);
+
+        $this->emit($runEvents, 'ml.run.started', [
+            'run_uuid' => $runUuid,
+            'pipeline' => $pipeline,
+            'started_at' => $startedAt->toIso8601String(),
+        ], $traceId);
 
         $source = (string) ($cfg['source'] ?? '');
         $format = (string) ($cfg['format'] ?? 'auto');
 
-        $rows = $this->loader->loadRows($source, $format);
-        if (count($rows) < 5) {
+        try {
+            $rows = $this->loader->loadRows($source, $format);
+        } catch (\Throwable $e) {
+            $mlRun->update([
+                'status' => 'failed',
+                'error' => 'Failed to load dataset: ' . $e->getMessage(),
+                'finished_at' => now(),
+            ]);
+
             $this->emit($runEvents, 'ml.ingest.failed', [
-                'run_id' => $runId,
+                'run_uuid' => $runUuid,
+                'pipeline' => $pipeline,
+                'source' => $source,
+                'error' => $e->getMessage(),
+            ], $traceId);
+
+            throw $e;
+        }
+
+        if (count($rows) < 5) {
+            $mlRun->update([
+                'status' => 'failed',
+                'error' => 'Insufficient rows',
+                'finished_at' => now(),
+            ]);
+
+            $this->emit($runEvents, 'ml.ingest.failed', [
+                'run_uuid' => $runUuid,
                 'pipeline' => $pipeline,
                 'source' => $source,
                 'row_count' => count($rows),
-            ]);
+            ], $traceId);
 
-            $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, [
+            $this->maybeEmitSingleSummary($runUuid, $pipeline, $startedAt, [
                 'ok' => false,
                 'error' => 'insufficient_rows',
-                'run_id' => $runId,
+                'run_uuid' => $runUuid,
                 'pipeline' => $pipeline,
-                'started_at' => $startedAt,
+                'started_at' => $startedAt->toIso8601String(),
                 'finished_at' => now()->toIso8601String(),
                 'events' => $runEvents,
-            ]);
-            return ['ok' => false, 'error' => 'insufficient_rows'];
+            ], $traceId);
+            
+            return ['ok' => false, 'error' => 'insufficient_rows', 'run_uuid' => $runUuid];
         }
 
+        $webhookCfg = (array) config('ml_automation.webhook', []);
         $includeRows = (bool) config('ml_automation.ingest.include_rows', false);
-        $hookIncludeRows = (bool) config('ml_automation.webhook.include_rows', false);
-        $sampleRows = max(0, (int) config('ml_automation.webhook.sample_rows', (int) config('ml_automation.ingest.sample_rows', 50)));
-        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
+        $rowPayload = WebhookPayloadHelper::preparePayload($webhookCfg, $rows);
 
         $target = (string) ($cfg['target'] ?? '');
         if ($target === '') {
@@ -88,16 +131,31 @@ final class MlAutomationPipeline
         $problem = $cfg['problem'] ?? null;
         $metric = $cfg['metric'] ?? null;
 
+        // Persist dataset
+        $datasetUuid = (string) Str::uuid();
+        $mlDataset = MlDataset::create([
+            'dataset_uuid' => $datasetUuid,
+            'name' => $pipeline . '_' . $startedAt->format('YmdHis'),
+            'source' => $source,
+            'schema' => ['columns' => array_keys((array) ($rows[0] ?? []))],
+            'row_count' => count($rows),
+            'target' => $target,
+            'meta' => [
+                'trace_id' => $traceId,
+                'run_uuid' => $runUuid,
+            ],
+        ]);
+
         $this->emit($runEvents, 'ml.ingest.completed', [
-            'run_id' => $runId,
+            'run_uuid' => $runUuid,
+            'dataset_uuid' => $datasetUuid,
             'pipeline' => $pipeline,
             'row_count' => count($rows),
             'columns' => array_keys((array) ($rows[0] ?? [])),
             'target' => $target,
             'source' => $source,
-            'row_sample' => $rowSample,
-            ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
-        ]);
+            ...$rowPayload,
+        ], $traceId);
 
         // Train via AutoML microservice
         try {
@@ -106,31 +164,38 @@ final class MlAutomationPipeline
                 target: $target,
                 problem: is_string($problem) ? $problem : null,
                 metric: is_string($metric) ? $metric : null,
+                traceId: $traceId,
             );
         } catch (\Throwable $e) {
+            $mlRun->update([
+                'status' => 'failed',
+                'error' => 'Training failed: ' . $e->getMessage(),
+                'finished_at' => now(),
+            ]);
+
             $this->emit($runEvents, 'ml.train.failed', [
-                'run_id' => $runId,
+                'run_uuid' => $runUuid,
+                'dataset_uuid' => $datasetUuid,
                 'pipeline' => $pipeline,
                 'request' => [
                     'target' => $target,
                     'problem' => $problem,
                     'metric' => $metric,
-                    'row_count' => count($rows),
-                    'row_sample' => $rowSample,
-                    ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
+                    ...$rowPayload,
                 ],
                 'error' => 'training_failed',
-            ]);
+            ], $traceId);
 
-            $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, [
+            $this->maybeEmitSingleSummary($runUuid, $pipeline, $startedAt, [
                 'ok' => false,
                 'error' => 'training_failed',
-                'run_id' => $runId,
+                'run_uuid' => $runUuid,
                 'pipeline' => $pipeline,
-                'started_at' => $startedAt,
+                'started_at' => $startedAt->toIso8601String(),
                 'finished_at' => now()->toIso8601String(),
                 'events' => $runEvents,
-            ]);
+            ], $traceId);
+            
             throw $e;
         }
 
@@ -142,59 +207,115 @@ final class MlAutomationPipeline
             $modelCard = $this->tryGenerateModelCard($rows, $target, $trainResult);
         }
 
+        // Persist model as candidate
+        $modelUuid = (string) Str::uuid();
+        $mlModel = MlModel::create([
+            'model_uuid' => $modelUuid,
+            'dataset_uuid' => $datasetUuid,
+            'automl_model_id' => $trainResult['model_id'],
+            'status' => 'candidate',
+            'problem' => $trainResult['problem'],
+            'metric' => $trainResult['metric'],
+            'score' => $trainResult['score'],
+            'features' => $trainResult['features'],
+            'train_result' => $trainResult,
+            'model_card' => $modelCard,
+            'meta' => [
+                'trace_id' => $traceId,
+                'run_uuid' => $runUuid,
+                'pipeline' => $pipeline,
+            ],
+            'trained_at' => now(),
+        ]);
+
+        // Auto-promote if enabled
+        $autoPromote = (bool) ($cfg['auto_promote'] ?? true);
+        if ($autoPromote) {
+            $this->promoteModel($mlModel);
+        }
+
         $artifact = [
             'ok' => true,
-            'run_id' => $runId,
+            'run_uuid' => $runUuid,
+            'dataset_uuid' => $datasetUuid,
+            'model_uuid' => $modelUuid,
             'pipeline' => $pipeline,
-            'started_at' => $startedAt,
+            'started_at' => $startedAt->toIso8601String(),
             'finished_at' => now()->toIso8601String(),
             'dataset' => [
                 'source' => $source,
                 'row_count' => count($rows),
                 'target' => $target,
                 'columns' => array_keys((array) ($rows[0] ?? [])),
-                'row_sample' => $rowSample,
-                ...( $includeRows ? ['rows' => $rows] : [] ),
+                ...($includeRows ? ['rows' => $rows] : []),
             ],
             'train' => $trainResult,
             'model_card' => $modelCard,
+            'promoted' => $autoPromote,
         ];
 
-        $this->storeArtifact($runId, $artifact);
+        $this->storeArtifact($runUuid, $artifact);
+
+        // Update run as completed
+        $mlRun->update([
+            'status' => 'completed',
+            'result' => $artifact,
+            'finished_at' => now(),
+        ]);
 
         $this->emit($runEvents, 'ml.train.completed', [
-            'run_id' => $runId,
+            'run_uuid' => $runUuid,
+            'dataset_uuid' => $datasetUuid,
+            'model_uuid' => $modelUuid,
             'pipeline' => $pipeline,
             'request' => [
                 'target' => $target,
                 'problem' => $problem,
                 'metric' => $metric,
-                'row_count' => count($rows),
-                'row_sample' => $rowSample,
-                ...( $hookIncludeRows ? ['rows' => $rows] : [] ),
+                ...$rowPayload,
             ],
             'response' => $trainResult,
             'model_card' => $modelCard,
-        ]);
+        ], $traceId);
 
         $this->emit($runEvents, 'ml.run.completed', [
-            'run_id' => $runId,
+            'run_uuid' => $runUuid,
+            'dataset_uuid' => $datasetUuid,
+            'model_uuid' => $modelUuid,
             'pipeline' => $pipeline,
-            'model_id' => (string) ($trainResult['model_id'] ?? ''),
-        ]);
+            'model_id' => $trainResult['model_id'],
+            'promoted' => $autoPromote,
+        ], $traceId);
 
-        $this->maybeEmitSingleSummary($runId, $pipeline, $startedAt, $artifact + [
+        $this->maybeEmitSingleSummary($runUuid, $pipeline, $startedAt, $artifact + [
             'events' => $runEvents,
-        ]);
+        ], $traceId);
 
         return $artifact;
+    }
+
+    /**
+     * Promote model to active and archive previous active.
+     */
+    private function promoteModel(MlModel $model): void
+    {
+        // Archive all current active models with same dataset
+        MlModel::where('dataset_uuid', $model->dataset_uuid)
+            ->where('status', 'active')
+            ->update(['status' => 'archived']);
+
+        // Promote this model
+        $model->update([
+            'status' => 'active',
+            'promoted_at' => now(),
+        ]);
     }
 
     /**
      * @param array<int, array{event:string, timestamp:string, data:array<string,mixed>}> $runEvents
      * @param array<string, mixed> $payload
      */
-    private function emit(array &$runEvents, string $event, array $payload): void
+    private function emit(array &$runEvents, string $event, array $payload, ?string $traceId = null): void
     {
         $runEvents[] = [
             'event' => $event,
@@ -202,7 +323,7 @@ final class MlAutomationPipeline
             'data' => $payload,
         ];
 
-        $this->webhook->notify($event, $payload);
+        $this->webhook->notify($event, $payload, $traceId);
     }
 
     /**
@@ -210,18 +331,18 @@ final class MlAutomationPipeline
      *
      * @param array<string, mixed> $artifact
      */
-    private function maybeEmitSingleSummary(string $runId, string $pipeline, string $startedAt, array $artifact): void
+    private function maybeEmitSingleSummary(string $runUuid, string $pipeline, \Illuminate\Support\Carbon $startedAt, array $artifact, ?string $traceId = null): void
     {
         if (!(bool) config('ml_automation.webhook.single_summary', false)) {
             return;
         }
 
         $this->webhook->notify('ml.run.payload', [
-            'run_id' => $runId,
+            'run_uuid' => $runUuid,
             'pipeline' => $pipeline,
-            'started_at' => $startedAt,
+            'started_at' => $startedAt->toIso8601String(),
             'artifact' => $artifact,
-        ]);
+        ], $traceId);
     }
 
     /**
@@ -297,11 +418,11 @@ final class MlAutomationPipeline
     /**
      * @param array<string, mixed> $artifact
      */
-    private function storeArtifact(string $runId, array $artifact): void
+    private function storeArtifact(string $runUuid, array $artifact): void
     {
         $disk = (string) config('ml_automation.storage.disk', 'local');
         $base = trim((string) config('ml_automation.storage.base_path', 'ml'), '/');
-        $path = $base . '/runs/' . $runId . '.json';
+        $path = $base . '/runs/' . $runUuid . '.json';
 
         Storage::disk($disk)->put($path, json_encode($artifact, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }

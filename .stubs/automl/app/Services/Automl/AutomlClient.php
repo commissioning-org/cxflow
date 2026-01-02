@@ -6,6 +6,7 @@ namespace App\Services\Automl;
 
 use Illuminate\Support\Facades\Http;
 use App\Services\Automl\AutomlWebhookNotifier;
+use App\Services\MlAutomation\WebhookPayloadHelper;
 
 final class AutomlClient
 {
@@ -17,13 +18,11 @@ final class AutomlClient
      * @param array<int, array<string, mixed>> $rows
      * @return array{model_id:string, problem:string, metric:string, score:float, features:array<int,string>}
      */
-    public function train(array $rows, string $target, ?string $problem = null, ?string $metric = null): array
+    public function train(array $rows, string $target, ?string $problem = null, ?string $metric = null, ?string $traceId = null): array
     {
         $baseUrl = rtrim((string) config('automl.base_url'), '/');
         $timeout = (int) config('automl.timeout_seconds', 60);
-        $includeRows = (bool) config('automl.webhook.include_rows', false);
-        $sampleRows = max(0, (int) config('automl.webhook.sample_rows', 50));
-        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
+        $webhookCfg = (array) config('automl.webhook', []);
 
         try {
             $resp = Http::timeout($timeout)
@@ -48,33 +47,35 @@ final class AutomlClient
                 'features' => is_array($json['features'] ?? null) ? $json['features'] : [],
             ];
 
-            // Post "all automl data" to webhook when enabled.
-            $this->webhook->notify('automl.train.completed', [
-                'request' => [
-                    'target' => $target,
-                    'problem' => $problem,
-                    'metric' => $metric,
-                    'row_count' => count($rows),
-                    'row_sample' => $rowSample,
-                    ...( $includeRows ? ['rows' => $rows] : [] ),
-                ],
-                'response' => $result,
+            // Use helper to prepare webhook payload
+            $payload = WebhookPayloadHelper::preparePayload($webhookCfg, $rows, [
+                'target' => $target,
+                'problem' => $problem,
+                'metric' => $metric,
             ]);
+
+            $payload = WebhookPayloadHelper::withTraceId([
+                'request' => $payload,
+                'response' => $result,
+            ], $traceId);
+
+            $this->webhook->notify('automl.train.completed', $payload);
 
             return $result;
         } catch (\Throwable $e) {
             // Keep errors generic (internal service).
-            $this->webhook->notify('automl.train.failed', [
-                'request' => [
-                    'target' => $target,
-                    'problem' => $problem,
-                    'metric' => $metric,
-                    'row_count' => count($rows),
-                    'row_sample' => $rowSample,
-                    ...( $includeRows ? ['rows' => $rows] : [] ),
-                ],
-                'error' => 'training_failed',
+            $payload = WebhookPayloadHelper::preparePayload($webhookCfg, $rows, [
+                'target' => $target,
+                'problem' => $problem,
+                'metric' => $metric,
             ]);
+
+            $payload = WebhookPayloadHelper::withTraceId([
+                'request' => $payload,
+                'error' => 'training_failed',
+            ], $traceId);
+
+            $this->webhook->notify('automl.train.failed', $payload);
             throw new \RuntimeException('AutoML training failed.', (int) $e->getCode(), $e);
         }
     }
@@ -83,14 +84,13 @@ final class AutomlClient
      * @param array<int, array<string, mixed>> $rows
      * @return array<int, mixed>
      */
-    public function predict(string $modelId, array $rows): array
+    public function predict(string $modelId, array $rows, ?string $traceId = null): array
     {
         $baseUrl = rtrim((string) config('automl.base_url'), '/');
         $timeout = (int) config('automl.timeout_seconds', 60);
-        $includeRows = (bool) config('automl.webhook.include_rows', false);
-        $sampleRows = max(0, (int) config('automl.webhook.sample_rows', 50));
-        $samplePreds = max(0, (int) config('automl.webhook.sample_predictions', 200));
-        $rowSample = $sampleRows > 0 ? array_slice($rows, 0, $sampleRows) : [];
+        $webhookCfg = (array) config('automl.webhook', []);
+        $samplePreds = max(0, (int) ($webhookCfg['sample_predictions'] ?? 200));
+        $fullPayload = (bool) ($webhookCfg['full_payload'] ?? false);
 
         try {
             $resp = Http::timeout($timeout)
@@ -107,33 +107,40 @@ final class AutomlClient
             $preds = $json['predictions'] ?? [];
 
             $out = is_array($preds) ? array_values($preds) : [];
-            $predSample = $samplePreds > 0 ? array_slice($out, 0, $samplePreds) : [];
+            $predSample = ($samplePreds > 0 && count($out) > 0) ? array_slice($out, 0, $samplePreds) : [];
 
-            $this->webhook->notify('automl.predict.completed', [
-                'request' => [
-                    'model_id' => $modelId,
-                    'row_count' => count($rows),
-                    'row_sample' => $rowSample,
-                    ...( $includeRows ? ['rows' => $rows] : [] ),
-                ],
-                'response' => [
-                    'prediction_count' => count($out),
-                    'prediction_sample' => $predSample,
-                    ...( $samplePreds === 0 ? ['predictions' => $out] : [] ),
-                ],
+            $payload = WebhookPayloadHelper::preparePayload($webhookCfg, $rows, [
+                'model_id' => $modelId,
             ]);
+
+            $responseData = [
+                'prediction_count' => count($out),
+                'prediction_sample' => $predSample,
+            ];
+
+            if ($fullPayload || $samplePreds === 0) {
+                $responseData['predictions'] = $out;
+            }
+
+            $payload = WebhookPayloadHelper::withTraceId([
+                'request' => $payload,
+                'response' => $responseData,
+            ], $traceId);
+
+            $this->webhook->notify('automl.predict.completed', $payload);
 
             return $out;
         } catch (\Throwable $e) {
-            $this->webhook->notify('automl.predict.failed', [
-                'request' => [
-                    'model_id' => $modelId,
-                    'row_count' => count($rows),
-                    'row_sample' => $rowSample,
-                    ...( $includeRows ? ['rows' => $rows] : [] ),
-                ],
-                'error' => 'prediction_failed',
+            $payload = WebhookPayloadHelper::preparePayload($webhookCfg, $rows, [
+                'model_id' => $modelId,
             ]);
+
+            $payload = WebhookPayloadHelper::withTraceId([
+                'request' => $payload,
+                'error' => 'prediction_failed',
+            ], $traceId);
+
+            $this->webhook->notify('automl.predict.failed', $payload);
             throw new \RuntimeException('AutoML prediction failed.', (int) $e->getCode(), $e);
         }
     }

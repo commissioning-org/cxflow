@@ -85,5 +85,9 @@ return [
 
         // If true, also emits a single aggregated run payload on completion/failure.
         'single_summary' => (bool) env('ML_AUTOMATION_WEBHOOK_SINGLE_SUMMARY', false),
+
+        // Optional: redact sensitive keys from webhook payloads
+        'redact_keys' => array_filter(explode(',', (string) env('ML_AUTOMATION_WEBHOOK_REDACT_KEYS', ''))),
+        'truncate_length' => (int) env('ML_AUTOMATION_WEBHOOK_TRUNCATE_LENGTH', 0),
     ],
 ];

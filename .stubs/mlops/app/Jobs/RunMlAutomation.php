@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\Jobs;
 
 use App\Services\MlAutomation\MlAutomationPipeline;
+use App\Services\MlAutomation\TraceHelper;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Facades\Cache;
-use Illuminate\Support\Str;
 
 /**
  * Queueable end-to-end ML automation.
@@ -32,15 +32,16 @@ final class RunMlAutomation implements ShouldQueue
         public readonly string $pipeline,
         public readonly string $resultKey,
         public readonly array $overrides = [],
+        public readonly ?string $traceId = null,
     ) {
     }
 
     public function handle(MlAutomationPipeline $pipeline): void
     {
-        $traceId = (string) Str::uuid();
+        $traceId = $this->traceId ?? TraceHelper::generate();
         $ttl = (int) config('ml_automation.ingest.timeout_seconds', 30) + 600;
 
-        $artifact = $pipeline->run($this->pipeline, $this->overrides);
+        $artifact = $pipeline->run($this->pipeline, $this->overrides, $traceId);
 
         Cache::put($this->resultKey, [
             'ok' => true,
@@ -52,9 +53,12 @@ final class RunMlAutomation implements ShouldQueue
 
     public function failed(\Throwable $e): void
     {
+        $traceId = $this->traceId ?? TraceHelper::generate();
+        
         Cache::put($this->resultKey, [
             'ok' => false,
-            'error' => 'ML automation failed.',
+            'trace_id' => $traceId,
+            'error' => 'ML automation failed: ' . $e->getMessage(),
         ], now()->addMinutes(10));
     }
 }

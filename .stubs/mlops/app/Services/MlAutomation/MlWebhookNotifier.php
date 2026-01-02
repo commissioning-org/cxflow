@@ -18,7 +18,7 @@ final class MlWebhookNotifier
     /**
      * @param array<string, mixed> $payload
      */
-    public function notify(string $event, array $payload): void
+    public function notify(string $event, array $payload, ?string $traceId = null): void
     {
         /** @var array<string, mixed> $cfg */
         $cfg = (array) config('ml_automation.webhook', []);
@@ -43,6 +43,11 @@ final class MlWebhookNotifier
 
         $mode = (string) (($cfg['mode'] ?? 'multiple') ?: 'multiple');
         $singleEvent = (string) (($cfg['single_event'] ?? 'ml.data') ?: 'ml.data');
+
+        // Add trace_id if provided
+        if ($traceId !== null && $traceId !== '') {
+            $payload['trace_id'] = $traceId;
+        }
 
         try {
             if ($mode === 'multiple' || $mode === 'both') {
@@ -76,6 +81,7 @@ final class MlWebhookNotifier
         } catch (\Throwable $e) {
             Log::warning('ml_automation.webhook_failed', [
                 'event' => $event,
+                'trace_id' => $traceId,
                 'message' => $e->getMessage(),
             ]);
         }
