@@ -78,8 +78,15 @@ services:
     container_name: laravel_ml
     environment:
       ML_MODELS_DIR: /models
+      ML_EXPERIMENTS_DIR: /experiments
+      ML_LOG_LEVEL: ${ML_LOG_LEVEL:-INFO}
+      ML_ENABLE_CACHE: ${ML_ENABLE_CACHE:-true}
+      ML_ENABLE_RATE_LIMITING: ${ML_ENABLE_RATE_LIMITING:-true}
+      ML_RATE_LIMIT_REQUESTS: ${ML_RATE_LIMIT_REQUESTS:-100}
+      ML_RATE_LIMIT_WINDOW_SEC: ${ML_RATE_LIMIT_WINDOW_SEC:-60}
     volumes:
       - ml_models:/models
+      - ml_experiments:/experiments
     ports:
       - "${ML_PORT:-8090}:8000"
 
@@ -193,3 +200,4 @@ volumes:
   node_modules:
   npm_cache:
   ml_models:
+  ml_experiments:

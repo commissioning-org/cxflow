@@ -28,12 +28,14 @@ import os
 import sys
 import time
 import uuid
+from collections import deque
 from collections.abc import AsyncGenerator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
@@ -43,6 +45,8 @@ import pandas as pd
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, field_validator
+from starlette.requests import Request
+from starlette.responses import JSONResponse, Response
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
@@ -72,31 +76,43 @@ from sklearn.linear_model import (
     Ridge,
     SGDClassifier,
 )
+from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+
+from app.config import settings
 
 # ---------------------------------------------------------------------------
 # Configuration & Logging
 # ---------------------------------------------------------------------------
 
-LOG_LEVEL = os.environ.get("ML_LOG_LEVEL", "INFO").upper()
 logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s | %(levelname)-8s | %(name)s | %(message)s",
+    level=getattr(logging, settings.log_level, logging.INFO),
+    format=settings.log_format,
     datefmt="%Y-%m-%d %H:%M:%S",
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("automl")
 
-MODELS_DIR = Path(os.environ.get("ML_MODELS_DIR", "/models")).resolve()
-MODELS_DIR.mkdir(parents=True, exist_ok=True)
+MODELS_DIR = settings.models_dir
+EXPERIMENTS_DIR = settings.experiments_dir
 
-MAX_ROWS = int(os.environ.get("ML_MAX_ROWS", "100000"))
-CV_FOLDS = int(os.environ.get("ML_CV_FOLDS", "5"))
-ENABLE_SHAP = os.environ.get("ML_ENABLE_SHAP", "true").lower() in ("true", "1", "yes")
+MAX_ROWS = settings.max_rows
+CV_FOLDS = settings.cv_folds
+ENABLE_SHAP = settings.enable_shap
+
+REGISTRY_PATH = MODELS_DIR / "_registry.json"
+EXPERIMENTS_INDEX_PATH = EXPERIMENTS_DIR / "experiments.json"
+
+# Simple in-memory caches
+_MODEL_CACHE: dict[str, dict[str, Any]] = {}
+_META_CACHE: dict[str, dict[str, Any]] = {}
+
+# Rate limiting (in-memory)
+_rate_buckets: dict[str, deque[float]] = {}
 
 # Thread pool for async training
-_executor = ThreadPoolExecutor(max_workers=4)
+_executor = ThreadPoolExecutor(max_workers=settings.max_concurrent_jobs)
 
 # In-memory job tracker (in production, use Redis or DB)
 _training_jobs: dict[str, dict[str, Any]] = {}
@@ -110,8 +126,12 @@ _training_jobs: dict[str, dict[str, Any]] = {}
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Startup/shutdown lifecycle."""
     logger.info("AutoML service starting up...")
+    logger.info(f"Environment: {settings.environment}")
     logger.info(f"Models directory: {MODELS_DIR}")
-    logger.info(f"Max rows: {MAX_ROWS}, CV folds: {CV_FOLDS}, SHAP: {ENABLE_SHAP}")
+    logger.info(f"Experiments directory: {EXPERIMENTS_DIR}")
+    logger.info(
+        f"Max rows: {MAX_ROWS}, CV folds: {CV_FOLDS}, SHAP: {ENABLE_SHAP}, cache: {settings.enable_cache}"
+    )
     # Load existing model count
     model_count = len(list(MODELS_DIR.glob("*.joblib")))
     logger.info(f"Loaded {model_count} existing models")
@@ -121,11 +141,54 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = FastAPI(
-    title="AutoML Service",
-    version="2.0",
-    description="Enhanced AutoML with hyperparameter tuning, explainability, and async training",
+    title=settings.app_name,
+    version=settings.version,
+    description="Enhanced AutoML with tuning, explainability, registry, and experiment tracking",
     lifespan=lifespan,
 )
+
+
+@app.middleware("http")
+async def request_middleware(request: Request, call_next):
+    """Request context + optional auth + basic rate limiting."""
+
+    # API key auth (optional)
+    if settings.api_key:
+        provided = request.headers.get("x-api-key")
+        if not provided or provided != settings.api_key:
+            return JSONResponse({"detail": "Unauthorized"}, status_code=401)
+
+    # Rate limiting (optional)
+    if settings.enable_rate_limiting and request.url.path not in ("/health", "/readiness", "/metrics"):
+        host = request.client.host if request.client else "unknown"
+        key = f"{host}:{request.url.path.split('?')[0]}"
+        now = time.time()
+        bucket = _rate_buckets.setdefault(key, deque())
+        # drop old
+        window_start = now - settings.rate_limit_window_sec
+        while bucket and bucket[0] < window_start:
+            bucket.popleft()
+        if len(bucket) >= settings.rate_limit_requests:
+            return JSONResponse(
+                {
+                    "detail": "Rate limit exceeded",
+                    "limit": settings.rate_limit_requests,
+                    "window_sec": settings.rate_limit_window_sec,
+                },
+                status_code=429,
+            )
+        bucket.append(now)
+
+    request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
+    start = time.time()
+    try:
+        response: Response = await call_next(request)
+    except Exception:
+        logger.exception("Unhandled exception", extra={"request_id": request_id})
+        raise
+    response.headers["x-request-id"] = request_id
+    response.headers["x-response-time-ms"] = f"{(time.time() - start) * 1000:.2f}"
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +225,10 @@ class TrainRequest(BaseModel):
     enable_tuning: bool = Field(False, description="Enable hyperparameter tuning")
     model_name: str | None = Field(None, description="Optional human-readable model name")
     tags: list[str] = Field(default_factory=list, description="Tags for model organization")
+
+    # Experiment tracking
+    experiment_id: str | None = Field(None, description="Optional experiment ID")
+    description: str | None = Field(None, description="Optional model description")
 
     @field_validator("rows")
     @classmethod
@@ -239,6 +306,9 @@ class ModelInfo(BaseModel):
 
     model_id: str
     model_name: str | None
+    description: str | None = None
+    version: int | None = None
+    stage: str | None = None
     problem: str
     metric: str
     score: float
@@ -420,6 +490,15 @@ def _candidates(problem: str, enable_tuning: bool = False) -> list[tuple[str, An
             ),
             ("hgb", HistGradientBoostingRegressor(random_state=42), {"max_iter": [100, 200]}),
             ("svr", SVR(), {"C": [0.1, 1.0, 10.0], "kernel": ["rbf", "linear"]}),
+            (
+                "mlp",
+                MLPRegressor(random_state=42, max_iter=2000),
+                {
+                    "hidden_layer_sizes": [(64,), (128,), (64, 32)],
+                    "alpha": [0.0001, 0.001],
+                    "learning_rate_init": [0.001, 0.01],
+                },
+            ),
         ]
     else:
         candidates = [
@@ -450,6 +529,15 @@ def _candidates(problem: str, enable_tuning: bool = False) -> list[tuple[str, An
             ),
             ("hgb", HistGradientBoostingClassifier(random_state=42), {"max_iter": [100, 200]}),
             ("svc", SVC(random_state=42, probability=True), {"C": [0.1, 1.0, 10.0]}),
+            (
+                "mlp",
+                MLPClassifier(random_state=42, max_iter=2000),
+                {
+                    "hidden_layer_sizes": [(64,), (128,), (64, 32)],
+                    "alpha": [0.0001, 0.001],
+                    "learning_rate_init": [0.001, 0.01],
+                },
+            ),
         ]
 
     if not enable_tuning:
@@ -530,6 +618,225 @@ def _generate_data_hash(df: pd.DataFrame) -> str:
     return hashlib.sha256(content.encode()).hexdigest()[:16]
 
 
+def _read_json(path: Path, default: Any) -> Any:
+    try:
+        if path.exists():
+            return json.loads(path.read_text())
+    except Exception as e:
+        logger.warning(f"Failed to read json {path}: {e}")
+    return default
+
+
+def _write_json(path: Path, data: Any) -> None:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2, sort_keys=True))
+    tmp.replace(path)
+
+
+def _load_registry() -> dict[str, Any]:
+    return _read_json(
+        REGISTRY_PATH,
+        {
+            "by_id": {},
+            "by_stage": {},
+            "versions": {},
+            "updated_at": None,
+        },
+    )
+
+
+def _save_registry(registry: dict[str, Any]) -> None:
+    registry["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_json(REGISTRY_PATH, registry)
+
+
+def _model_key(meta: dict[str, Any]) -> str:
+    # Use model_name for versioning if present; otherwise fall back to model_id
+    return (meta.get("model_name") or meta.get("model_id") or "unknown").strip()
+
+
+def _register_model(meta: dict[str, Any]) -> dict[str, Any]:
+    """Register model in registry and annotate meta with version/stage."""
+    registry = _load_registry()
+    key = _model_key(meta)
+    versions: dict[str, int] = registry.get("versions", {})
+    next_version = int(versions.get(key, 0)) + 1
+    versions[key] = next_version
+    registry["versions"] = versions
+
+    model_id = meta["model_id"]
+    stage = meta.get("stage") or "development"
+    record = {
+        "model_id": model_id,
+        "model_name": meta.get("model_name"),
+        "key": key,
+        "version": next_version,
+        "stage": stage,
+        "created_at": meta.get("created_at"),
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    registry.setdefault("by_id", {})[model_id] = record
+    # Default stage mapping only if not already set
+    registry.setdefault("by_stage", {})
+    if stage and stage not in registry["by_stage"]:
+        registry["by_stage"][stage] = model_id
+
+    _save_registry(registry)
+
+    # Add back to meta
+    meta["version"] = next_version
+    meta["stage"] = stage
+    return meta
+
+
+def _promote_model(model_id: str, stage: str, archive_existing: bool = True) -> dict[str, Any]:
+    registry = _load_registry()
+    by_id: dict[str, Any] = registry.get("by_id", {})
+    if model_id not in by_id:
+        raise ValueError("Model not registered")
+
+    by_stage: dict[str, str] = registry.get("by_stage", {})
+    existing = by_stage.get(stage)
+    if archive_existing and existing and existing != model_id and existing in by_id:
+        by_id[existing]["stage"] = "archived"
+
+    by_id[model_id]["stage"] = stage
+    by_id[model_id]["updated_at"] = datetime.now(timezone.utc).isoformat()
+    by_stage[stage] = model_id
+
+    registry["by_id"] = by_id
+    registry["by_stage"] = by_stage
+    _save_registry(registry)
+    return by_id[model_id]
+
+
+def _get_model_from_cache(model_id: str) -> Any:
+    art = _artifacts(model_id)
+    if not art.model_path.exists():
+        raise FileNotFoundError("Model not found")
+    mtime = art.model_path.stat().st_mtime
+
+    if settings.enable_cache:
+        cached = _MODEL_CACHE.get(model_id)
+        if cached and cached.get("mtime") == mtime:
+            return cached["model"]
+
+    model = joblib.load(art.model_path)
+    if settings.enable_cache:
+        _MODEL_CACHE[model_id] = {"mtime": mtime, "model": model, "loaded_at": time.time()}
+    return model
+
+
+def _get_meta_from_cache(model_id: str) -> dict[str, Any]:
+    art = _artifacts(model_id)
+    if not art.meta_path.exists():
+        raise FileNotFoundError("Metadata not found")
+    mtime = art.meta_path.stat().st_mtime
+
+    if settings.enable_cache:
+        cached = _META_CACHE.get(model_id)
+        if cached and cached.get("mtime") == mtime:
+            return cached["meta"]
+
+    meta = json.loads(art.meta_path.read_text())
+    if settings.enable_cache:
+        _META_CACHE[model_id] = {"mtime": mtime, "meta": meta, "loaded_at": time.time()}
+    return meta
+
+
+def _load_experiments_index() -> dict[str, Any]:
+    return _read_json(EXPERIMENTS_INDEX_PATH, {"experiments": [], "updated_at": None})
+
+
+def _save_experiments_index(idx: dict[str, Any]) -> None:
+    idx["updated_at"] = datetime.now(timezone.utc).isoformat()
+    _write_json(EXPERIMENTS_INDEX_PATH, idx)
+
+
+def _create_experiment(name: str, description: str | None = None, tags: dict[str, str] | None = None) -> dict[str, Any]:
+    exp_id = str(uuid.uuid4())
+    created_at = datetime.now(timezone.utc).isoformat()
+    exp = {
+        "experiment_id": exp_id,
+        "name": name,
+        "description": description,
+        "tags": tags or {},
+        "created_at": created_at,
+        "updated_at": created_at,
+        "run_count": 0,
+    }
+    idx = _load_experiments_index()
+    idx.setdefault("experiments", []).append(exp)
+    _save_experiments_index(idx)
+    (EXPERIMENTS_DIR / exp_id / "runs").mkdir(parents=True, exist_ok=True)
+    return exp
+
+
+def _get_experiment(exp_id: str) -> dict[str, Any] | None:
+    idx = _load_experiments_index()
+    for exp in idx.get("experiments", []):
+        if exp.get("experiment_id") == exp_id:
+            return exp
+    return None
+
+
+def _update_experiment(exp: dict[str, Any]) -> None:
+    idx = _load_experiments_index()
+    out = []
+    for item in idx.get("experiments", []):
+        if item.get("experiment_id") == exp.get("experiment_id"):
+            out.append(exp)
+        else:
+            out.append(item)
+    idx["experiments"] = out
+    _save_experiments_index(idx)
+
+
+def _log_run(
+    experiment_id: str,
+    run_id: str | None,
+    metrics: dict[str, float] | None = None,
+    params: dict[str, Any] | None = None,
+    tags: dict[str, str] | None = None,
+    model_id: str | None = None,
+) -> dict[str, Any]:
+    exp = _get_experiment(experiment_id)
+    if not exp:
+        raise ValueError("Experiment not found")
+
+    run_id = run_id or str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+    run_path = EXPERIMENTS_DIR / experiment_id / "runs" / f"{run_id}.json"
+
+    existing = _read_json(run_path, None)
+    if existing is None:
+        run = {
+            "run_id": run_id,
+            "experiment_id": experiment_id,
+            "status": "running",
+            "start_time": now,
+            "end_time": None,
+            "params": params or {},
+            "metrics": metrics or {},
+            "tags": tags or {},
+            "model_id": model_id,
+        }
+        exp["run_count"] = int(exp.get("run_count", 0)) + 1
+    else:
+        run = existing
+        run["params"].update(params or {})
+        run["metrics"].update(metrics or {})
+        run["tags"].update(tags or {})
+        if model_id:
+            run["model_id"] = model_id
+
+    run["updated_at"] = now
+    _write_json(run_path, run)
+    exp["updated_at"] = now
+    _update_experiment(exp)
+    return run
+
+
 # ---------------------------------------------------------------------------
 # Core Training Logic
 # ---------------------------------------------------------------------------
@@ -546,6 +853,8 @@ def _run_training(
     enable_tuning: bool,
     model_name: str | None,
     tags: list[str],
+    description: str | None = None,
+    experiment_id: str | None = None,
     job_id: str | None = None,
 ) -> dict[str, Any]:
     """
@@ -703,6 +1012,7 @@ def _run_training(
     meta = {
         "model_id": model_id,
         "model_name": model_name,
+        "description": description,
         "problem": actual_problem,
         "metric": actual_metric,
         "score": best_score,
@@ -717,6 +1027,29 @@ def _run_training(
         "label_encoder": encoder_info,
         "data_hash": _generate_data_hash(df),
     }
+
+    # Register model (adds version/stage)
+    try:
+        meta = _register_model(meta)
+    except Exception as e:
+        logger.warning(f"Registry update failed: {e}")
+
+    # Experiment tracking
+    if experiment_id:
+        try:
+            run = _log_run(
+                experiment_id=experiment_id,
+                run_id=None,
+                metrics={"score": float(best_score), "training_time_sec": float(training_time)},
+                params={"problem": actual_problem, "metric": actual_metric, "selected_model": best_name},
+                tags={"model_name": model_name or ""},
+                model_id=model_id,
+            )
+            meta["experiment_id"] = experiment_id
+            meta["run_id"] = run["run_id"]
+        except Exception as e:
+            logger.warning(f"Experiment logging failed: {e}")
+
     art.meta_path.write_text(json.dumps(meta, indent=2))
 
     logger.info(f"Training complete: model_id={model_id}, score={best_score:.4f}, time={training_time:.2f}s")
@@ -774,6 +1107,8 @@ def train(req: TrainRequest):
             enable_tuning=req.enable_tuning,
             model_name=req.model_name,
             tags=req.tags,
+            description=req.description,
+            experiment_id=req.experiment_id,
         )
 
         return TrainResponse(
@@ -834,6 +1169,8 @@ async def train_async(req: TrainRequest, background_tasks: BackgroundTasks):
                 enable_tuning=req.enable_tuning,
                 model_name=req.model_name,
                 tags=req.tags,
+                description=req.description,
+                experiment_id=req.experiment_id,
                 job_id=job_id,
             )
             _training_jobs[job_id]["status"] = JobStatus.COMPLETED.value
@@ -882,8 +1219,8 @@ def predict(req: PredictRequest):
         raise HTTPException(status_code=404, detail="Model not found")
 
     try:
-        model = joblib.load(art.model_path)
-        meta = json.loads(art.meta_path.read_text())
+        model = _get_model_from_cache(req.model_id)
+        meta = _get_meta_from_cache(req.model_id)
         df = pd.DataFrame(req.rows)
 
         # Ensure columns match
@@ -948,8 +1285,8 @@ async def predict_batch(req: BatchPredictRequest):
     if not art.model_path.exists():
         raise HTTPException(status_code=404, detail="Model not found")
 
-    model = joblib.load(art.model_path)
-    meta = json.loads(art.meta_path.read_text())
+    model = _get_model_from_cache(req.model_id)
+    meta = _get_meta_from_cache(req.model_id)
     df = pd.DataFrame(req.rows)
 
     # Validate features
@@ -985,13 +1322,20 @@ def list_models(
     """List all trained models with optional filtering."""
     models: list[ModelInfo] = []
 
+    registry = _load_registry()
+    by_id = registry.get("by_id", {})
+
     for meta_path in MODELS_DIR.glob("*.json"):
+        if meta_path.name.startswith("_"):
+            continue
         if meta_path.name.endswith(".importance.json") or meta_path.name.endswith(".shap.json"):
             continue
 
         try:
             meta = json.loads(meta_path.read_text())
             model_path = MODELS_DIR / f"{meta_path.stem}.joblib"
+
+            reg = by_id.get(meta.get("model_id")) if isinstance(meta, dict) else None
 
             # Apply filters
             if tag and tag not in meta.get("tags", []):
@@ -1003,6 +1347,9 @@ def list_models(
                 ModelInfo(
                     model_id=meta["model_id"],
                     model_name=meta.get("model_name"),
+                    description=meta.get("description"),
+                    version=meta.get("version") or (reg.get("version") if reg else None),
+                    stage=meta.get("stage") or (reg.get("stage") if reg else None),
                     problem=meta["problem"],
                     metric=meta["metric"],
                     score=meta["score"],
@@ -1034,11 +1381,16 @@ def get_model(model_id: str):
     if not art.meta_path.exists():
         raise HTTPException(status_code=404, detail="Model not found")
 
-    meta = json.loads(art.meta_path.read_text())
+    meta = _get_meta_from_cache(model_id)
+    registry = _load_registry()
+    reg = registry.get("by_id", {}).get(model_id)
 
     return ModelInfo(
         model_id=meta["model_id"],
         model_name=meta.get("model_name"),
+        description=meta.get("description"),
+        version=meta.get("version") or (reg.get("version") if reg else None),
+        stage=meta.get("stage") or (reg.get("stage") if reg else None),
         problem=meta["problem"],
         metric=meta["metric"],
         score=meta["score"],
@@ -1066,6 +1418,23 @@ def delete_model(model_id: str):
             path.unlink()
             deleted.append(path.name)
 
+    # Remove from caches
+    _MODEL_CACHE.pop(model_id, None)
+    _META_CACHE.pop(model_id, None)
+
+    # Remove from registry
+    try:
+        registry = _load_registry()
+        registry.get("by_id", {}).pop(model_id, None)
+        by_stage = registry.get("by_stage", {})
+        for stg, mid in list(by_stage.items()):
+            if mid == model_id:
+                by_stage.pop(stg, None)
+        registry["by_stage"] = by_stage
+        _save_registry(registry)
+    except Exception:
+        pass
+
     logger.info(f"Deleted model {model_id}: {deleted}")
 
     return {"deleted": True, "model_id": model_id, "files": deleted}
@@ -1091,7 +1460,7 @@ def get_feature_importance(model_id: str):
     # Compute from model
     try:
         model = joblib.load(art.model_path)
-        meta = json.loads(art.meta_path.read_text())
+        meta = _get_meta_from_cache(model_id)
         importances = _extract_feature_importance(model, meta["features"])
 
         if importances:
@@ -1127,7 +1496,7 @@ def explain_predictions(model_id: str, req: ExplainRequest):
 
     try:
         model = joblib.load(art.model_path)
-        meta = json.loads(art.meta_path.read_text())
+        meta = _get_meta_from_cache(model_id)
         df = pd.DataFrame(req.rows)[meta["features"]]
 
         # Get the underlying model
@@ -1257,6 +1626,264 @@ def metrics():
     ]
 
     return StreamingResponse(iter(["\n".join(lines) + "\n"]), media_type="text/plain")
+
+
+# ---------------------------------------------------------------------------
+# Time Series (lightweight: naive / seasonal naive)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TimeSeriesArtifacts:
+    model_path: Path
+    meta_path: Path
+
+
+def _ts_artifacts(model_id: str) -> TimeSeriesArtifacts:
+    safe = "".join(c for c in model_id if c.isalnum() or c in ("-", "_"))
+    return TimeSeriesArtifacts(
+        model_path=MODELS_DIR / f"{safe}.ts.joblib",
+        meta_path=MODELS_DIR / f"{safe}.ts.json",
+    )
+
+
+class TimeSeriesTrainRequest(BaseModel):
+    rows: list[dict[str, Any]] = Field(..., min_length=10)
+    target: str = Field(..., min_length=1)
+    datetime_col: str = Field(..., min_length=1)
+    frequency: str = Field("D", description="Pandas offset alias (D, H, T, W, M, etc.)")
+    seasonality_period: int | None = Field(None, ge=2, le=366, description="Season length (optional)")
+    model_name: str | None = None
+    tags: list[str] = Field(default_factory=list)
+
+
+class TimeSeriesTrainResponse(BaseModel):
+    model_id: str
+    model_name: str | None
+    target: str
+    datetime_col: str
+    frequency: str
+    seasonality_period: int | None
+    row_count: int
+    created_at: str
+
+
+class TimeSeriesForecastRequest(BaseModel):
+    model_id: str
+    horizon: int = Field(..., ge=1, le=3650)
+
+
+@app.post("/timeseries/train", response_model=TimeSeriesTrainResponse)
+def train_timeseries(req: TimeSeriesTrainRequest):
+    """Train a lightweight time-series forecaster (no external TS libs required)."""
+    df = pd.DataFrame(req.rows)
+    if req.datetime_col not in df.columns:
+        raise HTTPException(status_code=400, detail=f"datetime_col '{req.datetime_col}' not found")
+    if req.target not in df.columns:
+        raise HTTPException(status_code=400, detail=f"target '{req.target}' not found")
+
+    df[req.datetime_col] = pd.to_datetime(df[req.datetime_col], utc=True, errors="coerce")
+    df = df.dropna(subset=[req.datetime_col, req.target]).sort_values(req.datetime_col)
+    if df.empty:
+        raise HTTPException(status_code=400, detail="No valid rows after parsing/cleaning")
+
+    y = pd.to_numeric(df[req.target], errors="coerce")
+    df = df.assign(_y=y).dropna(subset=["_y"])
+    if df.empty:
+        raise HTTPException(status_code=400, detail="Target column must be numeric for forecasting")
+
+    values = df["_y"].astype(float).tolist()
+    timestamps = df[req.datetime_col].tolist()
+    if len(values) < 2:
+        raise HTTPException(status_code=400, detail="Need at least 2 numeric observations")
+
+    model_obj = {
+        "kind": "seasonal_naive" if req.seasonality_period else "naive",
+        "datetime_col": req.datetime_col,
+        "target": req.target,
+        "frequency": req.frequency,
+        "seasonality_period": req.seasonality_period,
+        "values": values[-5000:],
+        "last_timestamp": pd.to_datetime(timestamps[-1], utc=True).isoformat(),
+    }
+
+    model_id = str(uuid.uuid4())
+    art = _ts_artifacts(model_id)
+    joblib.dump(model_obj, art.model_path)
+
+    created_at = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "model_id": model_id,
+        "model_name": req.model_name,
+        "datetime_col": req.datetime_col,
+        "target": req.target,
+        "frequency": req.frequency,
+        "seasonality_period": req.seasonality_period,
+        "row_count": int(len(df)),
+        "created_at": created_at,
+        "tags": req.tags,
+    }
+    art.meta_path.write_text(json.dumps(meta, indent=2))
+
+    return TimeSeriesTrainResponse(
+        model_id=model_id,
+        model_name=req.model_name,
+        target=req.target,
+        datetime_col=req.datetime_col,
+        frequency=req.frequency,
+        seasonality_period=req.seasonality_period,
+        row_count=int(len(df)),
+        created_at=created_at,
+    )
+
+
+@app.post("/timeseries/forecast")
+def forecast_timeseries(req: TimeSeriesForecastRequest):
+    """Forecast using a trained time-series model."""
+    art = _ts_artifacts(req.model_id)
+    if not art.model_path.exists() or not art.meta_path.exists():
+        raise HTTPException(status_code=404, detail="Time series model not found")
+
+    model_obj = joblib.load(art.model_path)
+    meta = json.loads(art.meta_path.read_text())
+
+    freq = model_obj.get("frequency") or "D"
+    season = model_obj.get("seasonality_period")
+    values: list[float] = list(model_obj.get("values") or [])
+    if not values:
+        raise HTTPException(status_code=500, detail="Corrupt time series artifact (missing values)")
+
+    last_ts = pd.to_datetime(model_obj.get("last_timestamp"), utc=True)
+    future_index = pd.date_range(start=last_ts, periods=req.horizon + 1, freq=freq, tz="UTC")[1:]
+
+    preds: list[float] = []
+    if season and int(season) > 1 and len(values) >= int(season):
+        base = values[-int(season) :]
+        for i in range(req.horizon):
+            preds.append(float(base[i % int(season)]))
+    else:
+        last_val = float(values[-1])
+        preds = [last_val for _ in range(req.horizon)]
+
+    out = []
+    for ts, yhat in zip(future_index, preds, strict=False):
+        out.append({"timestamp": ts.isoformat(), "forecast": yhat})
+
+    return {
+        "model_id": req.model_id,
+        "target": meta.get("target"),
+        "datetime_col": meta.get("datetime_col"),
+        "frequency": meta.get("frequency"),
+        "horizon": req.horizon,
+        "forecasts": out,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Model Registry & Experiment Tracking Endpoints
+# ---------------------------------------------------------------------------
+
+
+class PromoteModelRequest(BaseModel):
+    stage: Literal["development", "staging", "production", "archived"] = Field(
+        ..., description="Target stage"
+    )
+    archive_existing: bool = Field(True, description="Archive existing model in stage")
+
+
+@app.post("/models/{model_id}/promote")
+def promote_model(model_id: str, req: PromoteModelRequest):
+    """Promote a model into a lifecycle stage (development/staging/production)."""
+    art = _artifacts(model_id)
+    if not art.meta_path.exists():
+        raise HTTPException(status_code=404, detail="Model not found")
+    try:
+        record = _promote_model(model_id=model_id, stage=req.stage, archive_existing=req.archive_existing)
+        # Reflect into model meta for easier reads
+        meta = _get_meta_from_cache(model_id)
+        meta["stage"] = record.get("stage")
+        meta["version"] = record.get("version")
+        meta["updated_at"] = datetime.now(timezone.utc).isoformat()
+        art.meta_path.write_text(json.dumps(meta, indent=2))
+        _META_CACHE.pop(model_id, None)
+        return {"ok": True, "model_id": model_id, "stage": record.get("stage"), "version": record.get("version")}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/models/resolve")
+def resolve_model(stage: Literal["development", "staging", "production"] = Query("production")):
+    """Resolve the current model_id for a stage."""
+    registry = _load_registry()
+    mid = registry.get("by_stage", {}).get(stage)
+    if not mid:
+        raise HTTPException(status_code=404, detail=f"No model in stage '{stage}'")
+    return {"stage": stage, "model_id": mid}
+
+
+class ExperimentCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1)
+    description: str | None = None
+    tags: dict[str, str] = Field(default_factory=dict)
+
+
+@app.get("/experiments")
+def list_experiments(limit: int = Query(100, ge=1, le=1000), offset: int = Query(0, ge=0)):
+    idx = _load_experiments_index()
+    exps = idx.get("experiments", [])
+    total = len(exps)
+    return {"experiments": exps[offset : offset + limit], "total": total}
+
+
+@app.post("/experiments")
+def create_experiment(req: ExperimentCreateRequest):
+    exp = _create_experiment(req.name, req.description, req.tags)
+    return exp
+
+
+class RunLogRequest(BaseModel):
+    run_id: str | None = None
+    metrics: dict[str, float] = Field(default_factory=dict)
+    params: dict[str, Any] = Field(default_factory=dict)
+    tags: dict[str, str] = Field(default_factory=dict)
+    model_id: str | None = None
+
+
+@app.post("/experiments/{experiment_id}/runs")
+def log_run(experiment_id: str, req: RunLogRequest):
+    try:
+        run = _log_run(
+            experiment_id=experiment_id,
+            run_id=req.run_id,
+            metrics=req.metrics,
+            params=req.params,
+            tags=req.tags,
+            model_id=req.model_id,
+        )
+        return run
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/experiments/{experiment_id}/runs")
+def list_runs(experiment_id: str, limit: int = Query(100, ge=1, le=1000)):
+    exp = _get_experiment(experiment_id)
+    if not exp:
+        raise HTTPException(status_code=404, detail="Experiment not found")
+    runs_dir = EXPERIMENTS_DIR / experiment_id / "runs"
+    runs = []
+    if runs_dir.exists():
+        for p in runs_dir.glob("*.json"):
+            try:
+                runs.append(json.loads(p.read_text()))
+            except Exception:
+                continue
+    runs.sort(key=lambda r: r.get("start_time", ""), reverse=True)
+    return {"experiment_id": experiment_id, "runs": runs[:limit], "total": len(runs)}
 
 
 # ---------------------------------------------------------------------------
