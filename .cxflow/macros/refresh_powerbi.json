@@ -1,21 +1,21 @@
 {
-  "name": "refresh_powerbi",
-  "description": "Refresh Power BI datasets with health checks and retry logic",
+  "name": "refresh_superset",
+  "description": "Refresh Superset datasets with health checks and retry logic",
   "trigger": "schedule",
   "actions": [
     {
       "type": "log",
-      "message": "Starting Power BI dataset refresh at {{context.timestamp}}",
+      "message": "Starting Superset dataset refresh at {{context.timestamp}}",
       "level": "info"
     },
     {
       "type": "get_memory",
-      "key": "powerbi_datasets",
+      "key": "superset_datasets",
       "store_as": "datasets"
     },
     {
       "type": "api_call",
-      "endpoint": "/powerbi/health",
+      "endpoint": "/superset/health",
       "method": "GET"
     },
     {
@@ -24,7 +24,7 @@
       "then": [
         {
           "type": "log",
-          "message": "Power BI service is healthy, proceeding with refresh",
+          "message": "Superset service is healthy, proceeding with refresh",
           "level": "info"
         },
         {
@@ -39,7 +39,7 @@
             },
             {
               "type": "api_call",
-              "endpoint": "/powerbi/datasets/refresh",
+              "endpoint": "/superset/datasets/refresh",
               "method": "POST"
             },
             {
@@ -50,40 +50,40 @@
         },
         {
           "type": "set_memory",
-          "key": "powerbi_last_refresh",
+          "key": "superset_last_refresh",
           "value": "{{context.timestamp}}"
         },
         {
           "type": "set_memory",
-          "key": "powerbi_refresh_status",
+          "key": "superset_refresh_status",
           "value": "success"
         },
         {
           "type": "log",
-          "message": "✅ Power BI dataset refresh completed successfully",
+          "message": "✅ Superset dataset refresh completed successfully",
           "level": "info"
         },
         {
           "type": "notify",
           "channel": "teams",
-          "message": "Power BI datasets refreshed successfully"
+          "message": "Superset datasets refreshed successfully"
         }
       ],
       "else": [
         {
           "type": "log",
-          "message": "❌ Power BI service is unavailable, skipping refresh",
+          "message": "❌ Superset service is unavailable, skipping refresh",
           "level": "error"
         },
         {
           "type": "set_memory",
-          "key": "powerbi_refresh_status",
+          "key": "superset_refresh_status",
           "value": "service_unavailable"
         },
         {
           "type": "notify",
           "channel": "teams",
-          "message": "⚠️ Power BI refresh skipped - service unavailable"
+          "message": "⚠️ Superset refresh skipped - service unavailable"
         }
       ]
     },
@@ -99,7 +99,7 @@
       "level": "info"
     }
   ],
-  "enabled": true,
+  "enabled": false,
   "version": "2.0.0",
   "created_at": "2025-12-31T19:45:45.610391+00:00",
   "updated_at": "2026-01-02T00:56:57.893Z",
@@ -108,6 +108,8 @@
     "enhanced": true,
     "features": ["health_checks", "retry_with_backoff", "conditionals", "loops", "error_handling"],
     "max_retries": 3,
-    "retry_delay_seconds": 5
+    "retry_delay_seconds": 5,
+    "deprecated": true,
+    "replacement": "refresh_superset.json"
   }
 }
