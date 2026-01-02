@@ -1,5 +1,8 @@
 FROM php:8.3-apache
 
+# Default docroot (docker-compose may override via environment)
+ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
+
 # System deps for common Laravel needs
 RUN apt-get update \
   && apt-get install -y --no-install-recommends \
@@ -49,11 +52,19 @@ RUN set -eux; \
   apt-get purge -y --auto-remove $PHPIZE_DEPS; \
   rm -rf /var/lib/apt/lists/*
 
-# Apache modules for Laravel
-RUN a2enmod rewrite headers env
+# Apache modules for Laravel + useful defaults
+RUN set -eux; \
+  a2enmod rewrite headers env expires deflate status remoteip reqtimeout; \
+  a2enmod brotli || true
 
-# Set Apache to serve Laravel's /public
+# Apache vhost + shared config snippets
 COPY .docker/apache/000-default.conf /etc/apache2/sites-available/000-default.conf
+COPY .docker/apache/conf-available/ /etc/apache2/conf-available/
+
+RUN set -eux; \
+  a2enconf 00-base 10-headers 20-compression 30-caching 40-remoteip 50-status 60-healthz; \
+  mkdir -p /var/www/_health; \
+  printf 'ok\n' > /var/www/_health/healthz.txt
 
 # PHP tuning for Laravel
 COPY .docker/php/conf.d/laravel.ini /usr/local/etc/php/conf.d/99-laravel.ini
