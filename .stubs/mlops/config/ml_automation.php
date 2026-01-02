@@ -18,6 +18,11 @@ return [
 
     'enabled' => (bool) env('ML_AUTOMATION_ENABLED', false),
 
+    // API endpoints (internal only)
+    'api' => [
+        'enabled' => (bool) env('ML_AUTOMATION_API_ENABLED', false),
+    ],
+
     // Storage (local disk by default). Artifacts are stored under storage/app/ml
     'storage' => [
         'disk' => env('ML_AUTOMATION_STORAGE_DISK', env('FILESYSTEM_DISK', 'local')),
