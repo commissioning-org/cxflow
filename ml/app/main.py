@@ -30,6 +30,7 @@ from app.api import (
     metrics_router,
     models_router,
     prediction_router,
+    search_router,
     superset_router,
     tfos_router,
     timeseries_router,
@@ -61,6 +62,7 @@ def create_app() -> FastAPI:
     app.include_router(feature_engineering_router)
     app.include_router(tfos_router)
     app.include_router(superset_router)
+    app.include_router(search_router)
 
     return app
 
