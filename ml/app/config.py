@@ -83,6 +83,22 @@ class Settings(BaseSettings):
     s3_bucket: str | None = None
     mlflow_tracking_uri: str | None = None
 
+    # Search (Meilisearch)
+    meili_url: str | None = Field(
+        default=None,
+        description="Meilisearch base URL (e.g. http://meilisearch:7700). When unset, search endpoints return 503.",
+    )
+    meili_api_key: str | None = Field(
+        default=None,
+        description="Meilisearch API key (optional, depends on your Meilisearch config).",
+    )
+    meili_timeout_sec: float = Field(default=5.0, ge=0.1, le=60.0)
+    meili_models_index: str = Field(default="ml_models", min_length=1)
+    meili_experiments_index: str = Field(default="ml_experiments", min_length=1)
+
+    # Search tuning (index settings)
+    meili_configure_indexes: bool = True
+
     # Deep learning
     torch_device: str = "auto"  # auto, cpu, cuda, mps
     default_epochs: int = Field(default=100, ge=1)
