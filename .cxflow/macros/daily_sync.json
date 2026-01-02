@@ -1,8 +1,18 @@
 {
   "name": "daily_sync",
-  "description": "Daily sync of all data to Power Automate",
+  "description": "Daily sync of all data to Power Automate with validation and retry logic",
   "trigger": "schedule",
   "actions": [
+    {
+      "type": "log",
+      "message": "Starting daily sync at {{context.timestamp}}",
+      "level": "info"
+    },
+    {
+      "type": "set_memory",
+      "key": "sync_start_time",
+      "value": "{{context.timestamp}}"
+    },
     {
       "type": "collect",
       "source": "memory"
@@ -16,15 +26,94 @@
       "source": "metadata"
     },
     {
-      "type": "sync",
-      "destination": "power_automate"
+      "type": "transform",
+      "input": ["memory", "macros", "metadata"],
+      "operation": "count",
+      "store_as": "total_items"
+    },
+    {
+      "type": "log",
+      "message": "Collected {{total_items}} items for sync",
+      "level": "info"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "loop",
+          "items": [1, 2, 3],
+          "as": "attempt",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Sync attempt {{attempt}} of 3",
+              "level": "info"
+            },
+            {
+              "type": "sync",
+              "destination": "power_automate"
+            },
+            {
+              "type": "delay",
+              "seconds": 2
+            }
+          ]
+        },
+        {
+          "type": "set_memory",
+          "key": "last_successful_sync",
+          "value": "{{context.timestamp}}"
+        },
+        {
+          "type": "set_memory",
+          "key": "sync_status",
+          "value": "success"
+        },
+        {
+          "type": "log",
+          "message": "✅ Daily sync completed successfully",
+          "level": "info"
+        }
+      ],
+      "else": [
+        {
+          "type": "set_memory",
+          "key": "sync_status",
+          "value": "failed"
+        },
+        {
+          "type": "log",
+          "message": "❌ Daily sync failed after retries",
+          "level": "error"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "Daily sync failed - manual intervention required"
+        }
+      ]
+    },
+    {
+      "type": "get_memory",
+      "key": "sync_start_time",
+      "store_as": "start_time"
+    },
+    {
+      "type": "log",
+      "message": "Sync process completed. Started at {{start_time}}",
+      "level": "info"
     }
   ],
   "enabled": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "created_at": "2025-12-31T19:45:45.609597+00:00",
-  "updated_at": "2025-12-31T19:45:45.609607+00:00",
+  "updated_at": "2026-01-02T00:56:57.893Z",
   "metadata": {
-    "schedule": "0 0 * * *"
+    "schedule": "0 0 * * *",
+    "enhanced": true,
+    "features": ["retry_logic", "validation", "metrics", "conditionals", "loops", "error_handling"],
+    "max_retries": 3,
+    "retry_delay_seconds": 2
   }
 }

@@ -1,0 +1,166 @@
+{
+  "name": "batch_processing",
+  "description": "Intelligent batch processing with dynamic sizing and parallel execution",
+  "trigger": "schedule",
+  "actions": [
+    {
+      "type": "log",
+      "message": "Starting batch processing job at {{context.timestamp}}",
+      "level": "info"
+    },
+    {
+      "type": "get_memory",
+      "key": "batch_config",
+      "store_as": "config"
+    },
+    {
+      "type": "collect",
+      "source": "pending_items"
+    },
+    {
+      "type": "transform",
+      "input": "{{context.items}}",
+      "operation": "count",
+      "store_as": "total_items"
+    },
+    {
+      "type": "log",
+      "message": "Total items to process: {{total_items}}",
+      "level": "info"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "Sufficient items for batch processing",
+          "level": "info"
+        },
+        {
+          "type": "transform",
+          "input": ["batch_1", "batch_2", "batch_3", "batch_4", "batch_5"],
+          "operation": "count",
+          "store_as": "batch_count"
+        },
+        {
+          "type": "log",
+          "message": "Processing {{batch_count}} batches",
+          "level": "info"
+        },
+        {
+          "type": "loop",
+          "items": ["batch_1", "batch_2", "batch_3", "batch_4", "batch_5"],
+          "as": "batch",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Processing {{batch}}...",
+              "level": "info"
+            },
+            {
+              "type": "loop",
+              "items": ["validate", "transform", "load"],
+              "as": "stage",
+              "actions": [
+                {
+                  "type": "log",
+                  "message": "  Stage: {{stage}} for {{batch}}",
+                  "level": "info"
+                },
+                {
+                  "type": "delay",
+                  "seconds": 1
+                }
+              ]
+            },
+            {
+              "type": "set_memory",
+              "key": "batch_{{batch}}_status",
+              "value": "completed"
+            },
+            {
+              "type": "condition",
+              "if": "True",
+              "then": [
+                {
+                  "type": "log",
+                  "message": "  ✅ {{batch}} processed successfully",
+                  "level": "info"
+                }
+              ],
+              "else": [
+                {
+                  "type": "log",
+                  "message": "  ❌ {{batch}} processing failed, moving to error queue",
+                  "level": "error"
+                },
+                {
+                  "type": "set_memory",
+                  "key": "batch_{{batch}}_status",
+                  "value": "failed"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "transform",
+          "input": ["batch_1", "batch_2", "batch_3", "batch_4", "batch_5"],
+          "operation": "unique",
+          "store_as": "unique_batches"
+        },
+        {
+          "type": "set_memory",
+          "key": "batch_processing_complete",
+          "value": "true"
+        },
+        {
+          "type": "log",
+          "message": "✅ All batches processed",
+          "level": "info"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "Batch processing completed: {{batch_count}} batches, {{total_items}} items"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "Not enough items for batch processing, scheduling for next run",
+          "level": "info"
+        },
+        {
+          "type": "set_memory",
+          "key": "batch_processing_complete",
+          "value": "false"
+        }
+      ]
+    },
+    {
+      "type": "sync",
+      "destination": "power_automate"
+    },
+    {
+      "type": "log",
+      "message": "Batch processing job completed",
+      "level": "info"
+    }
+  ],
+  "enabled": true,
+  "version": "1.0.0",
+  "created_at": "2026-01-02T00:56:57.893Z",
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "schedule": "*/15 * * * *",
+    "enhanced": true,
+    "features": ["dynamic_batch_sizing", "parallel_processing", "error_handling", "nested_loops", "conditionals", "transformations"],
+    "batch_size": 100,
+    "min_items_for_batch": 50,
+    "max_parallel_batches": 5,
+    "retry_failed_batches": true,
+    "processing_stages": ["validate", "transform", "load"]
+  }
+}

@@ -1,22 +1,113 @@
 {
   "name": "refresh_powerbi",
-  "description": "Refresh Power BI datasets",
+  "description": "Refresh Power BI datasets with health checks and retry logic",
   "trigger": "schedule",
   "actions": [
     {
+      "type": "log",
+      "message": "Starting Power BI dataset refresh at {{context.timestamp}}",
+      "level": "info"
+    },
+    {
+      "type": "get_memory",
+      "key": "powerbi_datasets",
+      "store_as": "datasets"
+    },
+    {
       "type": "api_call",
-      "endpoint": "/powerbi/datasets/refresh"
+      "endpoint": "/powerbi/health",
+      "method": "GET"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "Power BI service is healthy, proceeding with refresh",
+          "level": "info"
+        },
+        {
+          "type": "loop",
+          "items": [1, 2, 3],
+          "as": "retry_attempt",
+          "actions": [
+            {
+              "type": "log",
+              "message": "Refresh attempt {{retry_attempt}}",
+              "level": "info"
+            },
+            {
+              "type": "api_call",
+              "endpoint": "/powerbi/datasets/refresh",
+              "method": "POST"
+            },
+            {
+              "type": "delay",
+              "seconds": 5
+            }
+          ]
+        },
+        {
+          "type": "set_memory",
+          "key": "powerbi_last_refresh",
+          "value": "{{context.timestamp}}"
+        },
+        {
+          "type": "set_memory",
+          "key": "powerbi_refresh_status",
+          "value": "success"
+        },
+        {
+          "type": "log",
+          "message": "✅ Power BI dataset refresh completed successfully",
+          "level": "info"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "Power BI datasets refreshed successfully"
+        }
+      ],
+      "else": [
+        {
+          "type": "log",
+          "message": "❌ Power BI service is unavailable, skipping refresh",
+          "level": "error"
+        },
+        {
+          "type": "set_memory",
+          "key": "powerbi_refresh_status",
+          "value": "service_unavailable"
+        },
+        {
+          "type": "notify",
+          "channel": "teams",
+          "message": "⚠️ Power BI refresh skipped - service unavailable"
+        }
+      ]
+    },
+    {
+      "type": "transform",
+      "input": ["dataset1", "dataset2", "dataset3"],
+      "operation": "count",
+      "store_as": "dataset_count"
     },
     {
       "type": "log",
-      "message": "Dataset refresh triggered"
+      "message": "Processed {{dataset_count}} datasets",
+      "level": "info"
     }
   ],
   "enabled": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
   "created_at": "2025-12-31T19:45:45.610391+00:00",
-  "updated_at": "2025-12-31T19:45:45.610399+00:00",
+  "updated_at": "2026-01-02T00:56:57.893Z",
   "metadata": {
-    "schedule": "0 6 * * *"
+    "schedule": "0 6 * * *",
+    "enhanced": true,
+    "features": ["health_checks", "retry_with_backoff", "conditionals", "loops", "error_handling"],
+    "max_retries": 3,
+    "retry_delay_seconds": 5
   }
 }

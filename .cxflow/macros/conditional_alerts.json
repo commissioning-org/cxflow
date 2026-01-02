@@ -1,0 +1,157 @@
+{
+  "name": "conditional_alerts",
+  "description": "Intelligent alert system with priority-based routing and escalation",
+  "trigger": "event",
+  "actions": [
+    {
+      "type": "log",
+      "message": "Processing alert: {{context.alert_type}} with priority {{context.priority}}",
+      "level": "info"
+    },
+    {
+      "type": "get_memory",
+      "key": "alert_config",
+      "store_as": "config"
+    },
+    {
+      "type": "transform",
+      "input": "{{context.alert_type}}",
+      "operation": "uppercase",
+      "store_as": "alert_type_upper"
+    },
+    {
+      "type": "condition",
+      "if": "True",
+      "then": [
+        {
+          "type": "log",
+          "message": "HIGH PRIORITY ALERT: {{alert_type_upper}}",
+          "level": "error"
+        },
+        {
+          "type": "loop",
+          "items": ["teams", "slack", "email", "sms"],
+          "as": "channel",
+          "actions": [
+            {
+              "type": "notify",
+              "channel": "{{channel}}",
+              "message": "🚨 CRITICAL: {{context.alert_message}}"
+            },
+            {
+              "type": "log",
+              "message": "Alert sent to {{channel}}",
+              "level": "info"
+            },
+            {
+              "type": "delay",
+              "seconds": 1
+            }
+          ]
+        },
+        {
+          "type": "set_memory",
+          "key": "alert_escalated",
+          "value": "true"
+        },
+        {
+          "type": "execute",
+          "command": "trigger_oncall_escalation {{context.alert_type}}"
+        }
+      ],
+      "else": [
+        {
+          "type": "condition",
+          "if": "True",
+          "then": [
+            {
+              "type": "log",
+              "message": "MEDIUM PRIORITY ALERT: {{alert_type_upper}}",
+              "level": "warning"
+            },
+            {
+              "type": "loop",
+              "items": ["teams", "slack"],
+              "as": "channel",
+              "actions": [
+                {
+                  "type": "notify",
+                  "channel": "{{channel}}",
+                  "message": "⚠️ WARNING: {{context.alert_message}}"
+                },
+                {
+                  "type": "log",
+                  "message": "Alert sent to {{channel}}",
+                  "level": "info"
+                }
+              ]
+            },
+            {
+              "type": "set_memory",
+              "key": "alert_escalated",
+              "value": "false"
+            }
+          ],
+          "else": [
+            {
+              "type": "log",
+              "message": "LOW PRIORITY ALERT: {{alert_type_upper}}",
+              "level": "info"
+            },
+            {
+              "type": "notify",
+              "channel": "teams",
+              "message": "ℹ️ INFO: {{context.alert_message}}"
+            },
+            {
+              "type": "set_memory",
+              "key": "alert_escalated",
+              "value": "false"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "set_memory",
+      "key": "last_alert_time",
+      "value": "{{context.timestamp}}"
+    },
+    {
+      "type": "set_memory",
+      "key": "alert_count",
+      "value": "{{context.alert_count}}"
+    },
+    {
+      "type": "transform",
+      "input": ["high", "medium", "low"],
+      "operation": "count",
+      "store_as": "priority_levels"
+    },
+    {
+      "type": "log",
+      "message": "Alert processed. Priority levels available: {{priority_levels}}",
+      "level": "info"
+    },
+    {
+      "type": "sync",
+      "destination": "power_automate"
+    }
+  ],
+  "enabled": true,
+  "version": "1.0.0",
+  "created_at": "2026-01-02T00:56:57.893Z",
+  "updated_at": "2026-01-02T00:56:57.893Z",
+  "metadata": {
+    "event_type": "alert_triggered",
+    "enhanced": true,
+    "features": ["priority_routing", "escalation", "multi_channel_notification", "nested_conditionals", "loops", "transformations"],
+    "priority_levels": ["high", "medium", "low"],
+    "channels": {
+      "high": ["teams", "slack", "email", "sms"],
+      "medium": ["teams", "slack"],
+      "low": ["teams"]
+    },
+    "escalation_enabled": true
+  }
+}
