@@ -24,6 +24,15 @@ A comprehensive Python and PHP integration package for Apache Superset, providin
 - HTTP client with authentication caching
 - Guest token generation for embedding
 - All major API endpoints
+- **Artisan Console Commands** - CLI for dashboard, query, and sync operations
+- **Queue Jobs** - Async export, query execution, and sync
+- **Eloquent Models** - Local caching of dashboards, charts, and datasets
+- **Query Builder** - Fluent interface for building complex queries
+- **Embed Helper** - Utilities for dashboard embedding with RLS
+- **Webhook Notifier** - Event notifications for Superset operations
+- **Bulk Operations** - Batch delete and manage resources
+- **Retry Logic** - Automatic retry with exponential backoff
+- **Database Migrations** - Track and sync Superset resources locally
 
 ### Docker
 - Production-ready Docker Compose
@@ -380,6 +389,388 @@ See the docstrings in each module for detailed API documentation:
 - [embedding.py](embedding.py) - Dashboard embedding
 - [reports.py](reports.py) - Scheduled reports
 - [sql_lab.py](sql_lab.py) - SQL execution
+
+## PHP/Laravel Advanced Features
+
+### Artisan Console Commands
+
+The PHP integration includes comprehensive Artisan commands for managing Superset resources:
+
+#### Dashboard Management
+
+```bash
+# List dashboards
+php artisan superset:dashboard list --page=0 --page-size=25
+
+# Show dashboard details
+php artisan superset:dashboard show --id=1 --json
+
+# Create dashboard
+php artisan superset:dashboard create --title="Sales Dashboard" --published
+
+# Update dashboard
+php artisan superset:dashboard update --id=1 --title="New Title"
+
+# Delete dashboard
+php artisan superset:dashboard delete --id=1
+
+# Export dashboards
+php artisan superset:dashboard export --id=1,2,3 --output=dashboards.zip
+
+# Enable embedding
+php artisan superset:dashboard embed --id=1 --domains=https://example.com
+```
+
+#### SQL Query Execution
+
+```bash
+# Execute SQL query
+php artisan superset:query execute --database=1 --sql="SELECT * FROM users LIMIT 10"
+
+# Execute async query
+php artisan superset:query execute --database=1 --sql="SELECT * FROM large_table" --async
+
+# Get query results
+php artisan superset:query results --query-id=abc-123
+
+# List databases
+php artisan superset:query list-databases
+
+# Save results to file
+php artisan superset:query execute --database=1 --sql="SELECT * FROM users" --output=results.json
+```
+
+#### Resource Synchronization
+
+```bash
+# Sync all resources
+php artisan superset:sync --resource=all
+
+# Sync specific resource
+php artisan superset:sync --resource=dashboards
+
+# Full sync (vs incremental)
+php artisan superset:sync --resource=all --full
+
+# Async sync via queue
+php artisan superset:sync --resource=all --async
+
+# Generate sync report
+php artisan superset:sync --resource=all --report
+```
+
+### Queue Jobs
+
+Perform long-running operations asynchronously:
+
+```php
+use App\Jobs\ExportDashboard;
+use App\Jobs\ExecuteQuery;
+use App\Jobs\SyncSuperset;
+
+// Export dashboards in background
+ExportDashboard::dispatch([1, 2, 3], 'exports/dashboards.zip', 'result-key-123');
+
+// Execute long-running query
+ExecuteQuery::dispatch(1, 'SELECT * FROM large_table', null, 10000, 'query-result-123');
+
+// Sync resources in background
+SyncSuperset::dispatch('all', true, 'sync-result-123');
+
+// Check job results
+$result = Cache::get('result-key-123');
+```
+
+### Eloquent Models
+
+Work with Superset resources using Laravel Eloquent:
+
+```php
+use App\Models\SupersetDashboard;
+use App\Models\SupersetChart;
+use App\Models\SupersetDataset;
+
+// Query dashboards
+$dashboards = SupersetDashboard::where('published', true)
+    ->orderBy('created_at', 'desc')
+    ->get();
+
+// Get dashboard with charts
+$dashboard = SupersetDashboard::where('dashboard_id', 1)->first();
+$charts = $dashboard->charts();
+
+// Get chart with dataset
+$chart = SupersetChart::where('chart_id', 1)->first();
+$dataset = $chart->dataset();
+
+// Query by visualization type
+$pieCharts = SupersetChart::where('viz_type', 'pie')->get();
+
+// Get dataset columns
+$dataset = SupersetDataset::where('dataset_id', 1)->first();
+$columns = $dataset->getColumns();
+$metrics = $dataset->getMetrics();
+```
+
+### Query Builder
+
+Build complex Superset queries with a fluent interface:
+
+```php
+use App\Services\Superset\SupersetQueryBuilder;
+
+// Build a query
+$query = SupersetQueryBuilder::make(1)  // dataset ID
+    ->columns(['country', 'region'])
+    ->count('*', 'total_count')
+    ->sum('revenue', 'total_revenue')
+    ->avg('order_value', 'avg_order')
+    ->where('status', '==', 'completed')
+    ->whereIn('country', ['US', 'CA', 'UK'])
+    ->timeColumn('created_at')
+    ->last(30, 'days')
+    ->groupBy(['country', 'region'])
+    ->orderBy('total_revenue', false)
+    ->limit(100)
+    ->build();
+
+// Use with SupersetClient
+$client = app(SupersetClient::class);
+$client->authenticate();
+$result = $client->request('POST', '/api/v1/chart/data', $query);
+```
+
+### Embed Helper
+
+Generate embedded dashboards with row-level security:
+
+```php
+use App\Services\Superset\SupersetEmbedHelper;
+use App\Services\Superset\SupersetClient;
+
+$client = app(SupersetClient::class);
+$embedHelper = new SupersetEmbedHelper($client, config('superset.base_url'));
+
+// Simple iframe embed
+$html = $embedHelper->generateDashboardEmbed(
+    dashboardId: 1,
+    width: 100,
+    widthUnit: '%',
+    height: 800
+);
+
+// Embed with guest token and RLS
+$package = $embedHelper->generateEmbedPackage(
+    dashboardId: 1,
+    rowLevelSecurity: ['team_id = 123', 'region = "US"'],
+    user: ['username' => 'john.doe', 'first_name' => 'John', 'last_name' => 'Doe'],
+    options: [
+        'allowed_domains' => ['https://example.com'],
+        'expiry_seconds' => 600,
+        'width' => 100,
+        'height' => 800,
+    ]
+);
+
+// Use Superset Embedded SDK
+$sdkCode = $embedHelper->generateEmbeddedSDKCode(
+    dashboardId: 1,
+    containerId: 'superset-container',
+    fetchTokenUrl: '/api/superset/token'
+);
+```
+
+### Webhook Notifier
+
+Send notifications for Superset events:
+
+```php
+use App\Services\Superset\SupersetWebhookNotifier;
+
+$notifier = SupersetWebhookNotifier::make('https://hooks.example.com/superset');
+
+// Notify about dashboard events
+$notifier->notifyDashboardCreated($dashboard);
+$notifier->notifyDashboardUpdated($dashboard);
+$notifier->notifyDashboardDeleted(1);
+
+// Notify about query execution
+$notifier->notifyQueryExecuted($queryResult);
+
+// Notify about sync completion
+$notifier->notifySyncCompleted($stats);
+
+// Custom event notification
+$notifier->notifyEvent('custom.event', ['key' => 'value']);
+```
+
+### Bulk Operations
+
+Perform batch operations on multiple resources:
+
+```php
+use App\Services\Superset\SupersetClient;
+
+$client = app(SupersetClient::class);
+$client->authenticate();
+
+// Bulk delete dashboards
+$client->bulkDeleteDashboards([1, 2, 3, 4, 5]);
+
+// Bulk delete charts
+$client->bulkDeleteCharts([10, 11, 12]);
+
+// Bulk delete datasets
+$client->bulkDeleteDatasets([20, 21, 22]);
+
+// Duplicate dashboard
+$newDashboard = $client->duplicateDashboard(1, 'Copy of Sales Dashboard');
+
+// Favorite/unfavorite
+$client->favoriteDashboard(1);
+$client->unfavoriteDashboard(1);
+```
+
+### Advanced Client Features
+
+```php
+use App\Services\Superset\SupersetClient;
+
+$client = app(SupersetClient::class);
+$client->authenticate();
+
+// Health check
+$health = $client->health();
+
+// Version info
+$version = $client->version();
+
+// Get dashboard filters
+$filters = $client->getDashboardFilters(1);
+
+// Get chart SQL
+$sql = $client->getChartSql(1);
+
+// Validate SQL
+$validation = $client->validateSql(1, 'SELECT * FROM users');
+
+// Get query history
+$history = $client->getQueryHistory();
+
+// Get available database drivers
+$drivers = $client->getAvailableDatabaseDrivers();
+
+// Import dashboards
+$zipContent = file_get_contents('dashboards.zip');
+$client->importDashboards($zipContent, overwrite: false);
+```
+
+### Database Migrations
+
+Run migrations to set up local tracking tables:
+
+```bash
+# Copy migrations to your Laravel project
+cp superset/php/database/migrations/* database/migrations/
+
+# Run migrations
+php artisan migrate
+
+# This creates:
+# - superset_dashboards
+# - superset_charts
+# - superset_datasets
+# - superset_sync_history
+```
+
+### Configuration
+
+Enhanced configuration options in `config/superset.php`:
+
+```php
+return [
+    'base_url' => env('SUPERSET_URL', 'http://localhost:8088'),
+    'username' => env('SUPERSET_USERNAME', 'admin'),
+    'password' => env('SUPERSET_PASSWORD', 'admin'),
+    'verify_ssl' => env('SUPERSET_VERIFY_SSL', true),
+    'token_cache_duration' => env('SUPERSET_TOKEN_CACHE', 30),
+    
+    'query' => [
+        'limit' => env('SUPERSET_QUERY_LIMIT', 1000),
+        'timeout' => env('SUPERSET_QUERY_TIMEOUT', 300),
+    ],
+    
+    'embedding' => [
+        'allowed_domains' => array_filter(explode(',', env('SUPERSET_ALLOWED_DOMAINS', ''))),
+        'guest_token_expiry' => env('SUPERSET_GUEST_TOKEN_EXPIRY', 300),
+    ],
+    
+    'webhook' => [
+        'url' => env('SUPERSET_WEBHOOK_URL'),
+        'enabled' => env('SUPERSET_WEBHOOK_ENABLED', false),
+        'timeout' => env('SUPERSET_WEBHOOK_TIMEOUT', 10),
+        'retries' => env('SUPERSET_WEBHOOK_RETRIES', 3),
+    ],
+    
+    'sync' => [
+        'enabled' => env('SUPERSET_SYNC_ENABLED', true),
+        'schedule' => env('SUPERSET_SYNC_SCHEDULE', 'hourly'),
+        'full_sync_on_startup' => env('SUPERSET_FULL_SYNC_ON_STARTUP', false),
+    ],
+    
+    'retry' => [
+        'max_attempts' => env('SUPERSET_RETRY_MAX_ATTEMPTS', 3),
+        'backoff_multiplier' => env('SUPERSET_RETRY_BACKOFF', 2),
+    ],
+    
+    'rate_limit' => [
+        'enabled' => env('SUPERSET_RATE_LIMIT_ENABLED', false),
+        'max_requests' => env('SUPERSET_RATE_LIMIT_MAX', 100),
+        'per_minutes' => env('SUPERSET_RATE_LIMIT_MINUTES', 1),
+    ],
+];
+```
+
+### Environment Variables
+
+```env
+# Basic Configuration
+SUPERSET_URL=http://localhost:8088
+SUPERSET_USERNAME=admin
+SUPERSET_PASSWORD=admin
+SUPERSET_VERIFY_SSL=true
+
+# Token Caching
+SUPERSET_TOKEN_CACHE=30
+
+# Query Settings
+SUPERSET_QUERY_LIMIT=1000
+SUPERSET_QUERY_TIMEOUT=300
+
+# Embedding
+SUPERSET_ALLOWED_DOMAINS=https://app.example.com,https://dashboard.example.com
+SUPERSET_GUEST_TOKEN_EXPIRY=300
+
+# Webhooks
+SUPERSET_WEBHOOK_URL=https://hooks.example.com/superset
+SUPERSET_WEBHOOK_ENABLED=true
+SUPERSET_WEBHOOK_TIMEOUT=10
+SUPERSET_WEBHOOK_RETRIES=3
+
+# Sync Settings
+SUPERSET_SYNC_ENABLED=true
+SUPERSET_SYNC_SCHEDULE=hourly
+SUPERSET_FULL_SYNC_ON_STARTUP=false
+
+# Retry Configuration
+SUPERSET_RETRY_MAX_ATTEMPTS=3
+SUPERSET_RETRY_BACKOFF=2
+
+# Rate Limiting
+SUPERSET_RATE_LIMIT_ENABLED=false
+SUPERSET_RATE_LIMIT_MAX=100
+SUPERSET_RATE_LIMIT_MINUTES=1
+```
 
 ## License
 
