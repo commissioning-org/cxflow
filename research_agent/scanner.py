@@ -32,6 +32,8 @@ from typing import (
     Union,
 )
 
+from .ignore import IgnoreSpec, load_ignore_rules
+
 
 # ============================================================================
 # Constants
@@ -55,10 +57,20 @@ DEFAULT_IGNORE_DIRS: FrozenSet[str] = frozenset({
     ".coverage",
     "htmlcov",
     ".eggs",
-    "*.egg-info",
     ".sass-cache",
     ".cache",
     "vendor",
+})
+
+# Default ignore globs (applied in addition to DEFAULT_IGNORE_DIRS)
+DEFAULT_IGNORE_PATTERNS: FrozenSet[str] = frozenset({
+    "*.egg-info",
+    "*.pyc",
+    "*.pyo",
+    "*.log",
+    "*.min.js",
+    "*.min.css",
+    "*.map",
 })
 
 # Language detection by file extension
@@ -399,6 +411,8 @@ def iter_files(
     *,
     ignore_dirs: Optional[Sequence[str]] = None,
     ignore_patterns: Optional[Sequence[str]] = None,
+    respect_gitignore: bool = True,
+    ignore_files: Sequence[str] = (".gitignore", ".research-agentignore"),
     max_file_size_bytes: int = 1_000_000,
     include_hidden: bool = False,
     file_filter: Optional[Callable[[Path], bool]] = None,
@@ -406,14 +420,39 @@ def iter_files(
     """Iterate over files in a repository."""
     ignore = set(ignore_dirs) if ignore_dirs else set(DEFAULT_IGNORE_DIRS)
 
+    extra_patterns = list(ignore_patterns or [])
+    # Always include a small set of safe defaults (noise reducers).
+    extra_patterns.extend(sorted(DEFAULT_IGNORE_PATTERNS))
+
+    rules = load_ignore_rules(root, ignore_files) if respect_gitignore else []
+    spec = IgnoreSpec(root=root, rules=rules, extra_patterns=extra_patterns)
+
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in ignore and (include_hidden or not d.startswith('.'))]
+        # Ensure deterministic traversal for stable reports.
+        dirnames.sort()
+        filenames.sort()
+
+        # Filter directories in-place so os.walk doesn't descend into ignored ones.
+        kept_dirs: List[str] = []
+        for d in dirnames:
+            if d in ignore:
+                continue
+            if not include_hidden and d.startswith('.'):
+                continue
+
+            dp = Path(dirpath) / d
+            if spec.is_ignored(dp, is_dir=True):
+                continue
+            kept_dirs.append(d)
+        dirnames[:] = kept_dirs
 
         for fn in filenames:
             if not include_hidden and fn.startswith('.'):
                 continue
 
             p = Path(dirpath) / fn
+            if spec.is_ignored(p, is_dir=False):
+                continue
             if file_filter and not file_filter(p):
                 continue
 
@@ -475,9 +514,12 @@ def scan_repo(
     root: Path,
     *,
     ignore_dirs: Optional[Sequence[str]] = None,
+    ignore_patterns: Optional[Sequence[str]] = None,
+    respect_gitignore: bool = True,
+    include_hidden: bool = False,
     max_file_size_bytes: int = 1_000_000,
     parallel: bool = True,
-    max_workers: int = 4,
+    max_workers: int = 0,
     compute_hashes: bool = False,
     count_lines_enabled: bool = True,
     include_git_metadata: bool = True,
@@ -496,7 +538,19 @@ def scan_repo(
     errors = 0
     warnings: List[str] = []
 
-    file_paths = list(iter_files(root, ignore_dirs=ignore_dirs, max_file_size_bytes=max_file_size_bytes))
+    # If max_workers isn't specified, scale sensibly with CPU count.
+    if max_workers <= 0:
+        cpu = os.cpu_count() or 4
+        max_workers = min(32, max(4, cpu))
+
+    file_paths = list(iter_files(
+        root,
+        ignore_dirs=ignore_dirs,
+        ignore_patterns=ignore_patterns,
+        respect_gitignore=respect_gitignore,
+        include_hidden=include_hidden,
+        max_file_size_bytes=max_file_size_bytes,
+    ))
     total_files = len(file_paths)
 
     def process_file(idx: int, file_path: Path) -> Optional[FileInfo]:
