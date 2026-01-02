@@ -49,7 +49,7 @@ final class UsersTest extends TestCase
             'meta' => ['version'],
         ]);
     }
-}
+
     private function issueTokenWithAbilities(array $abilities): string
     {
         $password = 'password-'.Str::random(10);
@@ -70,3 +70,5 @@ final class UsersTest extends TestCase
 
         return (string) $response->json('data.token.plain');
     }
+
+}
