@@ -44,7 +44,7 @@ def collect_workspace_data() -> dict:
     }
     
     # Collect key files info
-    key_dirs = ["jupyterbook", "powerbi", "workflows", "ml", "ingestion", "docs"]
+    key_dirs = ["jupyterbook", "superset", "workflows", "ml", "ingestion", "docs"]
     
     for dir_name in key_dirs:
         dir_path = workspace_path / dir_name
@@ -85,7 +85,7 @@ def setup_sample_data(workflow: CXFlowSyncWorkflow):
     
     workflow.memory.set(
         "active_modules",
-        ["jupyterbook", "powerbi", "workflows", "ml", "ingestion"],
+        ["jupyterbook", "superset", "workflows", "ml", "ingestion"],
         category="config",
     )
     
@@ -120,12 +120,12 @@ def setup_sample_data(workflow: CXFlowSyncWorkflow):
     )
     
     workflow.macros.register(
-        name="refresh_powerbi",
-        description="Refresh Power BI datasets",
+        name="refresh_superset",
+        description="Refresh Superset datasets",
         trigger="schedule",
         actions=[
-            {"type": "api_call", "endpoint": "/powerbi/datasets/refresh"},
-            {"type": "log", "message": "Dataset refresh triggered"},
+            {"type": "api_call", "endpoint": "/superset/datasets/refresh"},
+            {"type": "log", "message": "Superset dataset refresh triggered"},
         ],
         metadata={"schedule": "0 6 * * *"},  # Daily at 6 AM
     )
@@ -166,12 +166,12 @@ def setup_sample_data(workflow: CXFlowSyncWorkflow):
     
     workflow.metadata.set(
         "module",
-        "powerbi",
+        "superset",
         {
             "version": "1.0.0",
             "status": "active",
-            "dependencies": ["aiohttp", "pydantic"],
-            "endpoints": ["/powerbi/health", "/powerbi/workspaces"],
+            "dependencies": ["pydantic"],
+            "endpoints": ["/superset/health", "/superset/dashboards", "/superset/datasets"],
         },
     )
     

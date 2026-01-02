@@ -199,7 +199,7 @@ CXFlow Power Automate Sync
 🔍 Collecting workspace data...
    Found 5 modules
    - jupyterbook: 4 files
-   - powerbi: 2 files
+  - superset: 2 files
    - workflows: 3 files
    - ml: 2 files
    - ingestion: 5 files

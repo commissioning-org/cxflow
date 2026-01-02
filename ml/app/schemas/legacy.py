@@ -271,45 +271,33 @@ class TFoSJobStatus(BaseModel):
     metrics: dict[str, float] | None = None
 
 
+
 # ---------------------------------------------------------------------------
-# Power BI / Fabric schemas
+# Superset schemas
 # ---------------------------------------------------------------------------
 
 
-class PBIWorkspaceRequest(BaseModel):
-    """Power BI workspace creation request."""
+class SupersetDashboardCreateRequest(BaseModel):
+    """Create a Superset dashboard (minimal payload wrapper)."""
 
-    name: str = Field(..., description="Workspace name")
-    capacity_id: str | None = Field(None, description="Premium capacity GUID")
-
-
-class PBIRefreshRequest(BaseModel):
-    """Dataset refresh request."""
-
-    workspace_id: str = Field(..., description="Workspace GUID")
-    dataset_id: str = Field(..., description="Dataset GUID")
-    notify_option: str = Field("NoNotification", description="Notification option")
+    dashboard_title: str = Field(..., description="Dashboard title")
+    slug: str | None = Field(None, description="Optional URL slug")
+    published: bool | None = Field(None, description="Published flag")
 
 
-class PBIDeployRequest(BaseModel):
-    """Pipeline deployment request."""
+class SupersetSQLExecuteRequest(BaseModel):
+    """Execute SQL via Superset SQL Lab."""
 
-    pipeline_id: str = Field(..., description="Pipeline GUID")
-    source_stage: int = Field(0, ge=0, le=2, description="Source stage (0=Dev, 1=Test)")
-    note: str = Field("", description="Deployment note")
-
-
-class PBIDtapRequest(BaseModel):
-    """DTAP workspace generation request."""
-
-    base_name: str = Field(..., description="Base workspace name")
-    capacity_id: str = Field(..., description="Premium capacity GUID")
-    stages: list[str] = Field(["dev", "tst", ""], description="Stage suffixes")
+    database_id: int = Field(..., ge=1, description="Superset database id")
+    sql: str = Field(..., min_length=1, description="SQL to execute")
+    schema: str | None = Field(None, description="Optional schema")
+    run_async: bool = Field(False, description="Run query asynchronously")
+    select_as_cta: bool = Field(False, description="Use CTAS")
+    ctas_method: str = Field("TABLE", description="CTAS method")
+    tmp_table_name: str | None = Field(None, description="Optional temp table name")
 
 
-class PBITrainingWorkspacesRequest(BaseModel):
-    """Training workspace generation request."""
+class SupersetDatasetRefreshRequest(BaseModel):
+    """Refresh a Superset dataset's columns from source."""
 
-    base_name: str = Field(..., description="Base workspace name")
-    count: int = Field(10, ge=1, le=100, description="Number of workspaces")
-    capacity_id: str | None = Field(None, description="Capacity GUID")
+    dataset_id: int = Field(..., ge=1, description="Superset dataset id")

@@ -141,8 +141,8 @@ php artisan assistant:run "Your content here" --workflow-file=workflow.json
 
 ## Other Components
 
-### Power BI Integration
-See `powerbi/` and `docs/POWERBI_AUTOMATION.md`
+### Superset Integration
+See `superset/` and `docs/SUPERSET_AUTOMATION.md`
 
 ### Jupyter Book Builder
 See `jupyterbook/` and `docs/JUPYTER_BOOK.md`

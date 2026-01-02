@@ -67,8 +67,8 @@ All macros in `.cxflow/macros` have been significantly enhanced with advanced fe
 - Results sync to Power Automate
 - Completion notifications
 
-### 4. refresh_powerbi.json (v2.0.0)
-**Purpose**: Refresh Power BI datasets with health checks and retry logic
+### 4. refresh_superset.json (v2.0.0)
+**Purpose**: Refresh Superset datasets with health checks and retry logic
 
 **Enhanced Features**:
 - Health check before refresh
@@ -78,7 +78,7 @@ All macros in `.cxflow/macros` have been significantly enhanced with advanced fe
 - Conditional execution based on service health
 
 **Key Actions**:
-- Power BI service health check
+- Superset service health check
 - Conditional refresh based on health
 - Multiple retry attempts with delays
 - Status tracking in memory

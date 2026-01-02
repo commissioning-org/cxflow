@@ -14,7 +14,7 @@ Quick reference guide for all enhanced macros in `.cxflow/macros`.
 | etl_pipeline | 1.0.0 | manual | 3-stage ETL, validation, rollback | 25 actions |
 | intelligent_monitoring | 1.0.0 | schedule | 4 metrics, anomaly detection, auto-remediation | 20 actions |
 | ml_pipeline_run | 2.0.0 | event | Data validation, multi-stage processing | 17 actions |
-| refresh_powerbi | 2.0.0 | schedule | Health checks, retry with backoff | 15 actions |
+| refresh_superset | 2.0.0 | schedule | Health checks, retry with backoff | 15 actions |
 | self_healing_workflow | 1.0.0 | event | 5-attempt recovery, rollback, state mgmt | 17 actions |
 
 **Total**: 10 macros, 100% enhanced, avg 17.4 actions per macro
@@ -66,7 +66,7 @@ execution = engine.execute_macro(macro, dry_run=True)
 
 ### Sync & Integration
 - **daily_sync**: Full sync with retry logic
-- **refresh_powerbi**: Power BI dataset refresh
+- **refresh_superset**: Superset dataset refresh
 
 ### Build & Deploy
 - **build_docs**: Documentation build with notifications
@@ -101,7 +101,7 @@ execution = engine.execute_macro(macro, dry_run=True)
   ]
 }
 ```
-**Used in**: daily_sync, refresh_powerbi, self_healing_workflow
+**Used in**: daily_sync, refresh_superset, self_healing_workflow
 
 ### Pattern 2: Conditional with Else
 ```json
@@ -135,7 +135,7 @@ execution = engine.execute_macro(macro, dry_run=True)
   "value": "{{context.timestamp}}"
 }
 ```
-**Used in**: build_docs, daily_sync, ml_pipeline_run, refresh_powerbi
+**Used in**: build_docs, daily_sync, ml_pipeline_run, refresh_superset
 
 ### Pattern 5: Nested Loops
 ```json
