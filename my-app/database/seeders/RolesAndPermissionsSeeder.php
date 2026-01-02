@@ -46,6 +46,7 @@ class RolesAndPermissionsSeeder extends Seeder
         ],
         'api' => [
             'api.access' => 'Access API',
+            'assistant.use' => 'Use assistant API',
             'api.tokens.manage' => 'Manage API tokens',
         ],
     ];
@@ -75,6 +76,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'content.delete',
                 'reports.view',
                 'api.access',
+                'assistant.use',
             ],
         ],
         User::ROLE_ADMIN => [
@@ -99,6 +101,7 @@ class RolesAndPermissionsSeeder extends Seeder
                 'reports.view',
                 'reports.export',
                 'api.access',
+                'assistant.use',
                 'api.tokens.manage',
             ],
         ],

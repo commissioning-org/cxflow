@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 use Illuminate\Support\Str;
+use Database\Seeders\RolesAndPermissionsSeeder;
 
 final class UsersTest extends TestCase
 {
@@ -52,11 +53,16 @@ final class UsersTest extends TestCase
 
     private function issueTokenWithAbilities(array $abilities): string
     {
+        $this->seed(RolesAndPermissionsSeeder::class);
+
         $password = 'password-'.Str::random(10);
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
             'password' => bcrypt($password),
         ]);
+
+        // Basic API access role.
+        $user->assignRole(User::ROLE_USER);
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,

@@ -15,11 +15,20 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
+        $this->call(RolesAndPermissionsSeeder::class);
+
         // User::factory(10)->create();
 
-        User::factory()->create([
+        $user = User::factory()->create([
             'name' => 'Test User',
             'email' => 'test@example.com',
         ]);
+
+        // Give the test user basic API access.
+        try {
+            $user->assignRole(User::ROLE_USER);
+        } catch (\Throwable) {
+            // Best-effort; don't fail seeding if roles are unavailable for any reason.
+        }
     }
 }

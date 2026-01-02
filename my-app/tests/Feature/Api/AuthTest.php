@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Tests\Feature\Api;
 
 use App\Models\User;
+use Database\Seeders\RolesAndPermissionsSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -15,11 +16,15 @@ final class AuthTest extends TestCase
 
     public function test_login_issues_token_and_me_returns_user(): void
     {
+        $this->seed(RolesAndPermissionsSeeder::class);
+
         $password = 'password-'.Str::random(10);
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
             'password' => bcrypt($password),
         ]);
+
+        $user->assignRole(User::ROLE_USER);
 
         $login = $this->postJson('/api/auth/login', [
             'email' => $user->email,
@@ -39,11 +44,15 @@ final class AuthTest extends TestCase
 
     public function test_logout_revokes_token(): void
     {
+        $this->seed(RolesAndPermissionsSeeder::class);
+
         $password = 'password-'.Str::random(10);
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
             'password' => bcrypt($password),
         ]);
+
+        $user->assignRole(User::ROLE_USER);
 
         $login = $this->postJson('/api/auth/login', [
             'email' => $user->email,
@@ -66,11 +75,15 @@ final class AuthTest extends TestCase
 
     public function test_login_rejects_invalid_credentials(): void
     {
+        $this->seed(RolesAndPermissionsSeeder::class);
+
         $password = 'password-'.Str::random(10);
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
             'password' => bcrypt($password),
         ]);
+
+        $user->assignRole(User::ROLE_USER);
 
         $resp = $this->postJson('/api/auth/login', [
             'email' => $user->email,

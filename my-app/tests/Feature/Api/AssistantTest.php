@@ -9,6 +9,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use App\Models\User;
 use Illuminate\Support\Str;
 use Tests\TestCase;
+use Database\Seeders\RolesAndPermissionsSeeder;
 
 final class AssistantTest extends TestCase
 {
@@ -54,11 +55,16 @@ final class AssistantTest extends TestCase
 
     private function issueTokenWithAbilities(array $abilities): string
     {
+        $this->seed(RolesAndPermissionsSeeder::class);
+
         $password = 'password-'.Str::random(10);
         $user = User::factory()->create([
             'status' => User::STATUS_ACTIVE,
             'password' => bcrypt($password),
         ]);
+
+        // Allow requesting assistant abilities.
+        $user->assignRole(User::ROLE_ADMIN);
 
         $response = $this->postJson('/api/auth/login', [
             'email' => $user->email,

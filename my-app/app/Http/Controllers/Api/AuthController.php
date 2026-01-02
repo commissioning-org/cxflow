@@ -9,6 +9,7 @@ use App\Http\Resources\UserResource;
 use App\Models\Activity;
 use App\Models\ApiToken;
 use App\Models\User;
+use App\Services\Auth\TokenAbilityResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -41,15 +42,30 @@ final class AuthController extends ApiController
             );
         }
 
+        // Only allow API login if the user is permitted to access the API at all.
+        if (!$user->hasPermission('api.access') && !$user->hasRole(User::ROLE_SUPER_ADMIN)) {
+            return $this->error(
+                request: $request,
+                message: 'Forbidden.',
+                status: 403,
+                code: 'forbidden',
+            );
+        }
+
         $expiresAt = null;
         if (($days = $request->expiresInDays()) !== null) {
             $expiresAt = now()->addDays($days);
         }
 
+        $abilities = app(TokenAbilityResolver::class)->restrict(
+            user: $user,
+            requested: $request->abilities(),
+        );
+
         $tokenData = ApiToken::generate(
             user: $user,
             name: $request->tokenName(),
-            abilities: $request->abilities(),
+            abilities: $abilities,
             expiresAt: $expiresAt,
         );
 
@@ -112,4 +128,5 @@ final class AuthController extends ApiController
 
         return $this->ok($request, ['ok' => true]);
     }
+
 }
