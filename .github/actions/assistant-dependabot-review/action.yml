@@ -1,5 +1,6 @@
 name: "Assistant Dependabot Review"
 description: "Generate a dependency-update summary using an internal review endpoint (requires ASSISTANT_API_KEY)."
+
 inputs:
   assistant_api_key:
     description: "API key for the internal assistant endpoint"
@@ -20,36 +21,47 @@ inputs:
   head_sha:
     description: "Head commit SHA"
     required: true
+
 runs:
   using: "composite"
   steps:
     - name: Create diff summary JSON
       shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr_number }}
+        BASE_SHA: ${{ inputs.base_sha }}
+        HEAD_SHA: ${{ inputs.head_sha }}
       run: |
         set -euo pipefail
-        base_sha="${{ inputs.base_sha }}"
-        head_sha="${{ inputs.head_sha }}"
 
-        # Keep payload small: names + a limited diff.
-        changed_files=$(git diff --name-only "$base_sha" "$head_sha" | head -n 200)
-        patch=$(git diff --unified=3 "$base_sha" "$head_sha" | head -c 45000)
+        python - <<'PY'
+        import json
+        import os
+        import subprocess
 
-        cat > review_input.json <<JSON
-        {
-          "pr": {"number": ${{ inputs.pr_number }}, "base": "$base_sha", "head": "$head_sha"},
-          "changed_files": $(python - <<'PY'
-        import json,sys
-        files=sys.stdin.read().splitlines()
-        print(json.dumps(files))
-        PY
-        <<<"$changed_files"),
-          "diff": $(python - <<'PY'
-        import json,sys
-        print(json.dumps(sys.stdin.read()))
-        PY
-        <<<"$patch")
+        base = os.environ["BASE_SHA"]
+        head = os.environ["HEAD_SHA"]
+        pr_number = int(os.environ["PR_NUMBER"])
+
+        files_out = subprocess.check_output([
+            "git", "diff", "--name-only", base, head
+        ], text=True)
+        changed_files = [line for line in files_out.splitlines() if line.strip()][:200]
+
+        diff_out = subprocess.check_output([
+            "git", "diff", "--unified=3", base, head
+        ], text=True, errors="replace")
+        patch = diff_out[:45000]
+
+        payload = {
+            "pr": {"number": pr_number, "base": base, "head": head},
+            "changed_files": changed_files,
+            "diff": patch,
         }
-        JSON
+
+        with open("review_input.json", "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        PY
 
     - name: Request assistant review
       shell: bash
@@ -60,100 +72,98 @@ runs:
       run: |
         set -euo pipefail
 
-        url="$ASSISTANT_BASE_URL"
-        url="${url%/}"
+        url="${ASSISTANT_BASE_URL%/}"
 
         if [ -z "${ASSISTANT_MODEL:-}" ]; then
-          cat > review_comment.md <<'MD'
-### Dependency update review (automated)
+          python - <<'PY'
+          content = """### Dependency update review (automated)
 
 Assistant review is configured but `ASSISTANT_MODEL` is missing.
 
 Add a repository secret named `ASSISTANT_MODEL` (model identifier for your OpenAI-compatible endpoint) to enable automated reviews.
-MD
+"""
+          with open('review_comment.md', 'w', encoding='utf-8') as f:
+              f.write(content)
+          PY
           exit 0
         fi
 
-        # OpenAI-compatible chat completions.
-        # NOTE: Keep prompt free of any provider/model naming.
-        prompt=$(python - <<'PY'
+        python - <<'PY'
         import json
-        with open('review_input.json','r') as f:
-          data=json.load(f)
-        print(
-          "You are reviewing a dependency update PR.\n"
-          "Return JSON with keys: summary, risks, breaking_changes, recommended_checks.\n\n"
-          "Input:\n" + json.dumps(data, indent=2)
+
+        with open('review_input.json', 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        prompt = (
+            "You are reviewing a dependency update PR.\n"
+            "Return JSON with keys: summary, risks, breaking_changes, recommended_checks.\n\n"
+            "Input:\n" + json.dumps(data, indent=2)
         )
+
+        body = {
+            "model": "${ASSISTANT_MODEL}",
+            "messages": [
+                {"role": "system", "content": "Return ONLY valid JSON."},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.2,
+        }
+
+        with open('request.json', 'w', encoding='utf-8') as f:
+            json.dump(body, f)
         PY
-        )
 
-        # Export prompt via env to avoid shell escaping issues.
-        export PROMPT="$prompt"
-
-        # Render request body.
-        body=$(python - <<'PY'
-        import json,os
-        prompt=os.environ['PROMPT']
-        model=os.environ.get('ASSISTANT_MODEL','')
-        print(json.dumps({
-          "model": model,
-          "messages": [
-            {"role": "system", "content": "Return ONLY valid JSON."},
-            {"role": "user", "content": prompt}
-          ],
-          "temperature": 0.2
-        }))
-        PY
-        )
-
-        # POST
-        resp=$(curl -sS --fail -X POST "$url/v1/chat/completions" \
+        curl -sS --fail -X POST "$url/v1/chat/completions" \
           -H "Authorization: Bearer $ASSISTANT_API_KEY" \
           -H "Content-Type: application/json" \
-          --data "$body")
+          --data @request.json > response.json
 
-        # Extract JSON content (best-effort).
         python - <<'PY'
-        import json,sys
-        resp=json.loads(sys.stdin.read())
-        content=resp.get('choices',[{}])[0].get('message',{}).get('content','')
-        print(content)
+        import json
+
+        with open('response.json', 'r', encoding='utf-8') as f:
+            resp = json.load(f)
+
+        content = resp.get('choices', [{}])[0].get('message', {}).get('content', '')
+        with open('review_output.json', 'w', encoding='utf-8') as f:
+            f.write(content)
         PY
-        <<<"$resp" > review_output.json
 
     - name: Format markdown comment
       shell: bash
       run: |
         set -euo pipefail
+
         python - <<'PY'
         import json
-        p='review_output.json'
-        with open(p,'r') as f:
-          raw=f.read().strip()
-        try:
-          data=json.loads(raw)
-        except Exception:
-          data={"summary": raw}
 
-        summary=data.get('summary','')
-        risks=data.get('risks',[])
-        bc=data.get('breaking_changes',[])
-        checks=data.get('recommended_checks',[])
+        p = 'review_output.json'
+        with open(p, 'r', encoding='utf-8') as f:
+            raw = f.read().strip()
+
+        try:
+            data = json.loads(raw) if raw else {}
+        except Exception:
+            data = {"summary": raw}
+
+        summary = data.get('summary', '')
+        risks = data.get('risks', [])
+        bc = data.get('breaking_changes', [])
+        checks = data.get('recommended_checks', [])
 
         def bullets(x):
-          if not x:
-            return "- (none)"
-          if isinstance(x,str):
-            return "- " + x
-          return "\n".join(["- " + str(i) for i in x])
+            if not x:
+                return "- (none)"
+            if isinstance(x, str):
+                return "- " + x
+            return "\n".join(["- " + str(i) for i in x])
 
-        md = """### Dependency update review (automated)\n\n"""
+        md = "### Dependency update review (automated)\n\n"
         md += f"**Summary**\n\n{summary}\n\n"
         md += "**Risks**\n\n" + bullets(risks) + "\n\n"
         md += "**Breaking changes**\n\n" + bullets(bc) + "\n\n"
         md += "**Recommended checks**\n\n" + bullets(checks) + "\n"
 
-        with open('review_comment.md','w') as f:
-          f.write(md)
+        with open('review_comment.md', 'w', encoding='utf-8') as f:
+            f.write(md)
         PY
