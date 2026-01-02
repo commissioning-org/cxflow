@@ -45,7 +45,21 @@ jobs:
 
     - name: Composer audit (best-effort)
       working-directory: my-app
-      run: composer audit --no-interaction || true
+      run: |
+        set -euo pipefail
+        # Composer audit can exit non-zero when vulnerabilities are found.
+        # Capture output for artifacts but don't fail this workflow.
+        (composer audit --format=json --no-interaction > audit.json) || true
+
+    - name: Upload composer artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: composer-audit
+        path: |
+          my-app/audit.json
+        if-no-files-found: ignore
+        retention-days: 14
 
     # Add a test script to composer.json, for instance: "test": "vendor/bin/phpunit"
     # Docs: https://getcomposer.org/doc/articles/scripts.md

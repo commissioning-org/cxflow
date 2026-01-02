@@ -49,4 +49,18 @@ jobs:
       run: chmod -R ug+rwX storage bootstrap/cache
 
     - name: Execute tests
-      run: php artisan test
+      run: |
+        set -euo pipefail
+        mkdir -p test-results
+        php artisan test --log-junit test-results/junit.xml
+
+    - name: Upload test artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: laravel-test-artifacts
+        path: |
+          my-app/test-results/
+          my-app/storage/logs/
+        if-no-files-found: ignore
+        retention-days: 14
