@@ -75,17 +75,17 @@ runs:
         url="${ASSISTANT_BASE_URL%/}"
 
         if [ -z "${ASSISTANT_MODEL:-}" ]; then
-          python - <<'PY'
-          content = """### Dependency update review (automated)
-
-Assistant review is configured but `ASSISTANT_MODEL` is missing.
-
-Add a repository secret named `ASSISTANT_MODEL` (model identifier for your OpenAI-compatible endpoint) to enable automated reviews.
-"""
-          with open('review_comment.md', 'w', encoding='utf-8') as f:
-              f.write(content)
-          PY
-          exit 0
+        python - <<'PY'
+        content = (
+            "### Dependency update review (automated)\n\n"
+            "Assistant review is configured but `ASSISTANT_MODEL` is missing.\n\n"
+            "Add a repository secret named `ASSISTANT_MODEL` (model identifier for your OpenAI-compatible endpoint) "
+            "to enable automated reviews.\n"
+        )
+        with open('review_comment.md', 'w', encoding='utf-8') as f:
+            f.write(content)
+        PY
+        exit 0
         fi
 
         python - <<'PY'
