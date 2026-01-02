@@ -7,12 +7,36 @@ on:
     branches: [ "main" ]
 
 jobs:
-
   build:
-
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
 
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:$(date +%s)
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build PHP/Apache app image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: .docker/php/Dockerfile
+          push: false
+          tags: cxflow/app:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build ML service image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ./ml
+          file: ./ml/Dockerfile
+          push: false
+          tags: cxflow/ml:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Validate docker compose config
+        run: docker compose config >/dev/null

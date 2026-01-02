@@ -17,20 +17,35 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.3'
+        tools: composer:v2
+        coverage: none
+
     - name: Validate composer.json and composer.lock
+      working-directory: my-app
       run: composer validate --strict
 
     - name: Cache Composer packages
       id: composer-cache
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       with:
-        path: vendor
-        key: ${{ runner.os }}-php-${{ hashFiles('**/composer.lock') }}
+        path: |
+          ~/.composer/cache/files
+          my-app/vendor
+        key: ${{ runner.os }}-php83-composer-${{ hashFiles('my-app/composer.lock') }}
         restore-keys: |
-          ${{ runner.os }}-php-
+          ${{ runner.os }}-php83-composer-
 
     - name: Install dependencies
-      run: composer install --prefer-dist --no-progress
+      working-directory: my-app
+      run: composer install --prefer-dist --no-progress --no-interaction
+
+    - name: Composer audit (best-effort)
+      working-directory: my-app
+      run: composer audit --no-interaction || true
 
     # Add a test script to composer.json, for instance: "test": "vendor/bin/phpunit"
     # Docs: https://getcomposer.org/doc/articles/scripts.md
