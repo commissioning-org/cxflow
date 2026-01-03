@@ -16,7 +16,12 @@ src/storage/app/ml/
 src/database/storage.env
 
 # IDE
-.vscode/
+# .vscode/ - Commented out to include workspace configuration for GitHub Copilot
+# For comprehensive Copilot workspace solution, we include:
+# - settings.json (workspace settings)
+# - extensions.json (recommended extensions)
+# - launch.json (debug configurations)
+# Uncomment if you prefer to keep personal IDE settings private
 
 # Misc
 .env.local
