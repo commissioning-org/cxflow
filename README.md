@@ -11,12 +11,18 @@ This repository scaffolds a **Linux/Apache/MySQL/PHP** environment tailored for 
 - **Event Bus** - Pub/sub messaging between components
 - **Workflow Orchestrator** - Cross-service automation
 - **Service Connectors** - Type-safe clients for ML, Webhooks, Research, JupyterBook, Superset
+- **CxSpaceLLM Integration** - GitHub Space AI model for dataflow enrichment ⭐ NEW
 
 ### Quick Start with Integrated System
 
 ```bash
 # Start all services
 docker-compose up -d
+
+# Configure CxSpaceLLM (add to .env)
+export CXSPACELLM_ENABLED=true
+export CXSPACELLM_TOKEN=your_token_here
+export CXSPACELLM_MODEL=CxSpaceLLM
 
 # Start the API Gateway (unified access point)
 python cxflow.py gateway
@@ -30,6 +36,55 @@ curl http://localhost:8100/system/services
 ```
 
 **Full Documentation**: [`cxflow_core/README.md`](cxflow_core/README.md)
+
+## 🤖 New: CxSpaceLLM - AI-Powered Dataflow Enrichment
+
+**CxSpaceLLM** is now integrated into all dataflows, providing AI-powered insights and analysis:
+
+### Key Features
+
+- **🧠 Automatic Enrichment**: All dataflows can be automatically enriched with AI insights
+- **📊 Data Analysis**: Analyze any dataflow data with natural language prompts
+- **💡 Smart Insights**: Get recommendations, identify issues, and suggest improvements
+- **🔄 Event-Driven**: Seamlessly integrated with the event bus for real-time processing
+- **🎯 Workflow Integration**: Works with ML, Research, Analytics, and all other workflows
+
+### Quick Example
+
+```python
+from cxflow_core import CXFlowConfig, ServiceRegistry, EventBus
+from cxflow_core.workflows import create_orchestrator
+
+# Setup
+config = CXFlowConfig()
+registry = ServiceRegistry()
+bus = EventBus()
+orchestrator = create_orchestrator(registry, bus, config)
+
+# Run ML workflow with AI enrichment
+result = await orchestrator.run_ml_workflow(
+    data=training_data,
+    enrich_with_ai=True  # Enable CxSpaceLLM enrichment
+)
+
+# Access AI-generated insights
+print(result["ai_insights"])
+
+# Or enrich any dataflow directly
+enriched = await orchestrator.enrich_dataflow({"type": "custom", "data": {...}})
+```
+
+**Examples**: [`examples/cxspacellm_integration.py`](examples/cxspacellm_integration.py)
+
+**Configuration**:
+```bash
+# Required environment variables
+CXSPACELLM_ENABLED=true
+CXSPACELLM_TOKEN=your_github_models_token
+CXSPACELLM_MODEL=CxSpaceLLM
+CXSPACELLM_BASE_URL=https://models.inference.ai.azure.com
+CXSPACELLM_TIMEOUT_SECONDS=60
+```
 
 ## 🚀 Significantly Enhanced Full Automation Capabilities
 
