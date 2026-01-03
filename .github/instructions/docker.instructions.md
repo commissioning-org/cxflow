@@ -526,3 +526,59 @@ services:
 8. ✅ Version your base images (not `latest`)
 9. ✅ Configure proper logging
 10. ✅ Test with `docker compose config` before deploying
+
+## Quick Reference: Common Cookbook Patterns
+
+### Add New Service
+**Prompt:**
+```
+Add a new Docker service to docker-compose.yml:
+- Name: analytics-service
+- Type: Python FastAPI on port 8200
+- Include health check
+- Connect to Redis and cxflow-network
+- Add volume mounts for development
+```
+
+### Create Dockerfile
+**Prompt:**
+```
+Create a Dockerfile for a Python service:
+- Multi-stage build
+- Python 3.11 slim base
+- Non-root user
+- Health check
+- Install dependencies separately
+```
+
+### Add Health Check
+**Prompt:**
+```
+Add a health check to this Docker service:
+- Check HTTP endpoint /health
+- 30 second interval
+- 10 second timeout
+- 3 retries
+```
+
+### Debug Container
+**Prompt:**
+```
+How do I debug this container:
+- Access shell
+- View logs
+- Check network connectivity
+- Inspect environment variables
+```
+
+### Service Communication
+**Prompt:**
+```
+Configure these services to communicate:
+- Use service names not localhost
+- Connect to shared network
+- Set proper depends_on conditions
+```
+
+For more prompts, see: [docs/COPILOT_COOKBOOK_EXAMPLES.md](../../docs/COPILOT_COOKBOOK_EXAMPLES.md)
+

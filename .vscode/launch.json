@@ -1,0 +1,95 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Python: Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Python: CXFlow Gateway",
+      "type": "python",
+      "request": "launch",
+      "module": "cxflow",
+      "args": ["gateway"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Python: ML Service",
+      "type": "python",
+      "request": "launch",
+      "module": "uvicorn",
+      "args": [
+        "ml.app:app",
+        "--reload",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "8090"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Python: Research Agent",
+      "type": "python",
+      "request": "launch",
+      "module": "research_agent",
+      "args": ["--help"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Python: Workflow Enhanced",
+      "type": "python",
+      "request": "launch",
+      "module": "workflows.cxflow_enhanced",
+      "args": ["memory", "query"],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Python: Pytest - Current File",
+      "type": "python",
+      "request": "launch",
+      "module": "pytest",
+      "args": [
+        "${file}",
+        "-v"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "PHP: Listen for Xdebug",
+      "type": "php",
+      "request": "launch",
+      "port": 9003,
+      "pathMappings": {
+        "/var/www/html": "${workspaceFolder}/src"
+      }
+    },
+    {
+      "name": "PHP: Artisan Command",
+      "type": "php",
+      "request": "launch",
+      "program": "${workspaceFolder}/src/artisan",
+      "args": ["--help"],
+      "cwd": "${workspaceFolder}/src"
+    },
+    {
+      "name": "Docker: Attach to app",
+      "type": "docker-compose",
+      "request": "attach",
+      "service": "app"
+    }
+  ]
+}

@@ -1,0 +1,116 @@
+{
+  "name": "CXFlow Development Environment",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "app",
+  "workspaceFolder": "/var/www/html",
+  
+  "features": {
+    "ghcr.io/devcontainers/features/github-cli:1": {},
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    },
+    "ghcr.io/devcontainers/features/python:1": {
+      "version": "3.11"
+    }
+  },
+  
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "GitHub.copilot",
+        "GitHub.copilot-chat",
+        "GitHub.vscode-pull-request-github",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.black-formatter",
+        "charliermarsh.ruff",
+        "bmewburn.vscode-intelephense-client",
+        "ms-azuretools.vscode-docker",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "editorconfig.editorconfig",
+        "mikestead.dotenv",
+        "redhat.vscode-yaml"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.black-formatter",
+          "editor.formatOnSave": true,
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        "[php]": {
+          "editor.defaultFormatter": "bmewburn.vscode-intelephense-client"
+        },
+        "python.linting.enabled": true,
+        "python.linting.pylintEnabled": false,
+        "python.linting.flake8Enabled": true,
+        "python.testing.pytestEnabled": true,
+        "files.associations": {
+          "*.env.example": "dotenv",
+          "Dockerfile*": "dockerfile"
+        },
+        "github.copilot.enable": {
+          "*": true,
+          "plaintext": false,
+          "markdown": true,
+          "scminput": false
+        }
+      }
+    }
+  },
+  
+  "forwardPorts": [
+    80,
+    3306,
+    6379,
+    8025,
+    8080,
+    8001,
+    8002,
+    8003,
+    8090,
+    8100
+  ],
+  
+  "portsAttributes": {
+    "80": {
+      "label": "Laravel App",
+      "onAutoForward": "notify"
+    },
+    "3306": {
+      "label": "MySQL"
+    },
+    "6379": {
+      "label": "Redis"
+    },
+    "8025": {
+      "label": "Mailhog"
+    },
+    "8080": {
+      "label": "phpMyAdmin"
+    },
+    "8001": {
+      "label": "Webhook Engine"
+    },
+    "8002": {
+      "label": "Research Agent"
+    },
+    "8003": {
+      "label": "JupyterBook"
+    },
+    "8090": {
+      "label": "ML Service"
+    },
+    "8100": {
+      "label": "CXFlow Core Gateway"
+    }
+  },
+  
+  "postCreateCommand": "bin/init && composer install",
+  
+  "remoteUser": "www-data"
+}
