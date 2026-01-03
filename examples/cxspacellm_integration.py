@@ -24,6 +24,22 @@ from cxflow_core import (
 from cxflow_core.workflows import create_orchestrator
 
 
+def extract_content_from_response(response: dict) -> str:
+    """
+    Safely extract content from CxSpaceLLM API response.
+    
+    Args:
+        response: API response dictionary
+        
+    Returns:
+        Content string, or empty string if not found
+    """
+    choices = response.get("choices", [])
+    if choices and len(choices) > 0:
+        return choices[0].get("message", {}).get("content", "")
+    return ""
+
+
 async def example_direct_llm_usage():
     """Example: Direct usage of CxSpaceLLM connector."""
     print("\n=== Example 1: Direct CxSpaceLLM Usage ===\n")
@@ -51,12 +67,7 @@ async def example_direct_llm_usage():
             max_tokens=500
         )
         
-        # Safely extract content
-        choices = response.get("choices", [])
-        content = ""
-        if choices and len(choices) > 0:
-            content = choices[0].get("message", {}).get("content", "")
-        
+        content = extract_content_from_response(response)
         print(f"Response: {content[:200] if content else '(no content)'}...")
         print(f"Usage: {response.get('usage', {})}")
     except Exception as e:
@@ -77,12 +88,7 @@ async def example_direct_llm_usage():
             prompt="Analyze this ML model performance and suggest improvements"
         )
         
-        # Safely extract content
-        choices = analysis.get("choices", [])
-        content = ""
-        if choices and len(choices) > 0:
-            content = choices[0].get("message", {}).get("content", "")
-        
+        content = extract_content_from_response(analysis)
         print(f"Analysis: {content[:200] if content else '(no content)'}...")
     except Exception as e:
         print(f"Error: {e}")
@@ -170,12 +176,7 @@ async def example_workflow_integration():
             custom_prompt="Analyze these performance metrics over time and identify trends"
         )
         
-        # Safely extract content
-        choices = analysis.get("choices", [])
-        content = ""
-        if choices and len(choices) > 0:
-            content = choices[0].get("message", {}).get("content", "")
-        
+        content = extract_content_from_response(analysis)
         print(f"Analysis: {content[:200] if content else '(no content)'}...")
     except Exception as e:
         print(f"Error: {e}")

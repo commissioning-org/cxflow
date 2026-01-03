@@ -222,7 +222,11 @@ class SupersetConnector(ServiceConnector):
 class CxSpaceLLMConnector(ServiceConnector):
     """Connector for CxSpaceLLM - GitHub Space Model."""
     
-    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config=None):
+    # Constants for data truncation
+    MAX_DATA_LENGTH = 1000
+    TRUNCATION_SUFFIX_LENGTH = 3
+    
+    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: "CXFlowConfig | None" = None):
         super().__init__("cxspacellm", registry, event_bus)
         self.config = config
         
@@ -259,6 +263,22 @@ class CxSpaceLLMConnector(ServiceConnector):
             response = await client.request(method, full_url, headers=headers, **kwargs)
             response.raise_for_status()
             return response.json()
+    
+    @staticmethod
+    def _extract_content_from_response(response: dict[str, Any]) -> str:
+        """
+        Safely extract content from API response.
+        
+        Args:
+            response: API response dictionary
+            
+        Returns:
+            Content string, or empty string if not found
+        """
+        choices = response.get("choices", [])
+        if choices and len(choices) > 0:
+            return choices[0].get("message", {}).get("content", "")
+        return ""
     
     async def chat_completion(
         self,
@@ -343,8 +363,8 @@ class CxSpaceLLMConnector(ServiceConnector):
         # Extract key information for analysis
         # Safely truncate JSON data while preserving structure
         data_str = json.dumps(dataflow_data.get('data', {}), indent=2)
-        if len(data_str) > 1000:
-            data_str = data_str[:997] + "..."
+        if len(data_str) > self.MAX_DATA_LENGTH:
+            data_str = data_str[:self.MAX_DATA_LENGTH - self.TRUNCATION_SUFFIX_LENGTH] + "..."
         
         prompt = f"""Analyze this dataflow and provide insights:
         
@@ -366,11 +386,8 @@ Provide:
         
         response = await self.chat_completion(messages, temperature=0.3)
         
-        # Extract AI insights from response - safely handle empty choices
-        choices = response.get("choices", [])
-        insights = ""
-        if choices and len(choices) > 0:
-            insights = choices[0].get("message", {}).get("content", "")
+        # Extract AI insights from response using helper method
+        insights = self._extract_content_from_response(response)
         
         # Enrich the dataflow data
         enriched_data = dataflow_data.copy()
