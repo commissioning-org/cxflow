@@ -12,6 +12,7 @@ from cxflow_core.connectors import (
     ResearchAgentConnector,
     SupersetConnector,
     WebhookConnector,
+    CxSpaceLLMConnector,
 )
 from cxflow_core.events import Event, EventBus, EventPriority
 from cxflow_core.registry import ServiceRegistry
@@ -30,9 +31,10 @@ class WorkflowOrchestrator:
     - Model results -> Dashboard creation
     """
     
-    def __init__(self, registry: ServiceRegistry, event_bus: EventBus):
+    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config=None):
         self.registry = registry
         self.event_bus = event_bus
+        self.config = config
         
         # Initialize connectors
         self.ml = MLServiceConnector(registry, event_bus)
@@ -40,6 +42,7 @@ class WorkflowOrchestrator:
         self.research = ResearchAgentConnector(registry, event_bus)
         self.jupyterbook = JupyterBookConnector(registry, event_bus)
         self.superset = SupersetConnector(registry, event_bus)
+        self.cxspacellm = CxSpaceLLMConnector(registry, event_bus, config)
         
         # Subscribe to events
         self._setup_event_handlers()
@@ -93,20 +96,37 @@ class WorkflowOrchestrator:
         self,
         data: dict[str, Any],
         webhook_url: str | None = None,
+        enrich_with_ai: bool = True,
     ) -> dict[str, Any]:
         """
-        Run complete ML workflow.
+        Run complete ML workflow with optional CxSpaceLLM enrichment.
         
         Steps:
         1. Train model
-        2. Optionally send webhook notification
-        3. Return results
+        2. Enrich with CxSpaceLLM insights (if enabled)
+        3. Optionally send webhook notification
+        4. Return results
         """
         logger.info("Starting ML workflow")
         
         # Train model
         train_result = await self.ml.train(data)
         model_id = train_result["model_id"]
+        
+        # Enrich with CxSpaceLLM if enabled
+        if enrich_with_ai and self.cxspacellm.enabled:
+            try:
+                dataflow_data = {
+                    "id": model_id,
+                    "type": "ml_training",
+                    "status": "complete",
+                    "data": train_result
+                }
+                enriched = await self.cxspacellm.enrich_dataflow(dataflow_data)
+                train_result["ai_insights"] = enriched.get("ai_insights")
+                logger.info(f"Enriched ML workflow with CxSpaceLLM insights")
+            except Exception as e:
+                logger.error(f"Failed to enrich with CxSpaceLLM: {e}")
         
         # Send webhook if URL provided
         if webhook_url:
@@ -115,6 +135,7 @@ class WorkflowOrchestrator:
                     "event": "ml.train.complete",
                     "model_id": model_id,
                     "score": train_result.get("score"),
+                    "ai_insights": train_result.get("ai_insights"),
                 })
             except Exception as e:
                 logger.error(f"Failed to send webhook: {e}")
@@ -125,19 +146,36 @@ class WorkflowOrchestrator:
         self,
         repo: str,
         generate_docs: bool = True,
+        enrich_with_ai: bool = True,
     ) -> dict[str, Any]:
         """
-        Run research and documentation workflow.
+        Run research and documentation workflow with optional CxSpaceLLM enrichment.
         
         Steps:
         1. Analyze repository
-        2. Generate documentation
-        3. Return results
+        2. Enrich with CxSpaceLLM insights (if enabled)
+        3. Generate documentation
+        4. Return results
         """
         logger.info(f"Starting research workflow for {repo}")
         
         # Analyze repo
         analysis = await self.research.analyze_repo(repo)
+        
+        # Enrich with CxSpaceLLM if enabled
+        if enrich_with_ai and self.cxspacellm.enabled:
+            try:
+                dataflow_data = {
+                    "id": repo,
+                    "type": "research_analysis",
+                    "status": "complete",
+                    "data": analysis
+                }
+                enriched = await self.cxspacellm.enrich_dataflow(dataflow_data)
+                analysis["ai_insights"] = enriched.get("ai_insights")
+                logger.info(f"Enriched research workflow with CxSpaceLLM insights")
+            except Exception as e:
+                logger.error(f"Failed to enrich with CxSpaceLLM: {e}")
         
         # Generate docs if requested
         if generate_docs:
@@ -157,14 +195,16 @@ class WorkflowOrchestrator:
         self,
         model_id: str,
         create_dashboard: bool = True,
+        enrich_with_ai: bool = True,
     ) -> dict[str, Any]:
         """
-        Run analytics and visualization workflow.
+        Run analytics and visualization workflow with optional CxSpaceLLM enrichment.
         
         Steps:
         1. Get model information
-        2. Create Superset dashboard
-        3. Return results
+        2. Enrich with CxSpaceLLM insights (if enabled)
+        3. Create Superset dashboard
+        4. Return results
         """
         logger.info(f"Starting analytics workflow for model {model_id}")
         
@@ -176,6 +216,21 @@ class WorkflowOrchestrator:
             raise ValueError(f"Model {model_id} not found")
         
         result = {"model": model}
+        
+        # Enrich with CxSpaceLLM if enabled
+        if enrich_with_ai and self.cxspacellm.enabled:
+            try:
+                dataflow_data = {
+                    "id": model_id,
+                    "type": "analytics",
+                    "status": "complete",
+                    "data": model
+                }
+                enriched = await self.cxspacellm.enrich_dataflow(dataflow_data)
+                result["ai_insights"] = enriched.get("ai_insights")
+                logger.info(f"Enriched analytics workflow with CxSpaceLLM insights")
+            except Exception as e:
+                logger.error(f"Failed to enrich with CxSpaceLLM: {e}")
         
         # Create dashboard if requested
         if create_dashboard:
@@ -190,8 +245,48 @@ class WorkflowOrchestrator:
                 logger.error(f"Failed to create dashboard: {e}")
         
         return result
+    
+    async def enrich_dataflow(self, dataflow_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Enrich any dataflow with CxSpaceLLM insights.
+        
+        Args:
+            dataflow_data: Dataflow data to enrich
+            
+        Returns:
+            Enriched dataflow data
+        """
+        if not self.cxspacellm.enabled:
+            logger.warning("CxSpaceLLM is not enabled, returning original dataflow")
+            return dataflow_data
+        
+        try:
+            return await self.cxspacellm.enrich_dataflow(dataflow_data)
+        except Exception as e:
+            logger.error(f"Failed to enrich dataflow: {e}")
+            return dataflow_data
+    
+    async def analyze_dataflow_with_ai(
+        self,
+        dataflow_data: dict[str, Any],
+        custom_prompt: str | None = None
+    ) -> dict[str, Any]:
+        """
+        Analyze dataflow data using CxSpaceLLM.
+        
+        Args:
+            dataflow_data: Dataflow data to analyze
+            custom_prompt: Optional custom prompt for analysis
+            
+        Returns:
+            Analysis results from CxSpaceLLM
+        """
+        if not self.cxspacellm.enabled:
+            raise RuntimeError("CxSpaceLLM is not enabled")
+        
+        return await self.cxspacellm.analyze_data(dataflow_data, custom_prompt)
 
 
-def create_orchestrator(registry: ServiceRegistry, event_bus: EventBus) -> WorkflowOrchestrator:
-    """Create a workflow orchestrator."""
-    return WorkflowOrchestrator(registry, event_bus)
+def create_orchestrator(registry: ServiceRegistry, event_bus: EventBus, config=None) -> WorkflowOrchestrator:
+    """Create a workflow orchestrator with CxSpaceLLM support."""
+    return WorkflowOrchestrator(registry, event_bus, config)

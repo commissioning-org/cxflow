@@ -141,30 +141,87 @@ predictions = await ml.predict(model_id, rows)
 
 ### Workflow Orchestrator
 
-Coordinate workflows across services.
+Coordinate workflows across services with CxSpaceLLM enrichment.
 
 ```python
 from cxflow_core.workflows import create_orchestrator
+from cxflow_core import CXFlowConfig
 
-orchestrator = create_orchestrator(registry, bus)
+config = CXFlowConfig()
+orchestrator = create_orchestrator(registry, bus, config)
 
-# Run ML workflow with webhook notification
+# Run ML workflow with CxSpaceLLM AI insights
 result = await orchestrator.run_ml_workflow(
     data=training_data,
-    webhook_url="https://example.com/webhook"
+    webhook_url="https://example.com/webhook",
+    enrich_with_ai=True  # Enable CxSpaceLLM enrichment
 )
+print(result.get("ai_insights"))
 
-# Run research and documentation workflow
+# Run research workflow with AI enrichment
 analysis = await orchestrator.run_research_workflow(
     repo="username/repo",
-    generate_docs=True
+    generate_docs=True,
+    enrich_with_ai=True  # Enable CxSpaceLLM enrichment
 )
+print(analysis.get("ai_insights"))
 
-# Run analytics workflow
+# Run analytics workflow with AI enrichment
 analytics = await orchestrator.run_analytics_workflow(
     model_id="abc123",
-    create_dashboard=True
+    create_dashboard=True,
+    enrich_with_ai=True  # Enable CxSpaceLLM enrichment
 )
+print(analytics.get("ai_insights"))
+
+# Directly enrich any dataflow
+dataflow = {"id": "flow1", "type": "ingestion", "data": {...}}
+enriched = await orchestrator.enrich_dataflow(dataflow)
+print(enriched.get("ai_insights"))
+
+# Analyze dataflow with custom prompt
+analysis = await orchestrator.analyze_dataflow_with_ai(
+    dataflow_data={"metrics": [...]},
+    custom_prompt="Analyze these metrics and identify trends"
+)
+```
+
+### CxSpaceLLM Connector
+
+Direct integration with GitHub Space CxSpaceLLM model for AI-powered dataflow enrichment.
+
+```python
+from cxflow_core import CxSpaceLLMConnector, CXFlowConfig
+
+config = CXFlowConfig()
+llm = CxSpaceLLMConnector(registry, bus, config)
+
+# Check if enabled
+if llm.enabled:
+    # Generate chat completion
+    response = await llm.chat_completion(
+        messages=[
+            {"role": "system", "content": "You are a data analyst."},
+            {"role": "user", "content": "Analyze this data..."}
+        ],
+        temperature=0.7,
+        max_tokens=1000
+    )
+    
+    # Analyze data with AI
+    analysis = await llm.analyze_data(
+        data={"metrics": [1, 2, 3]},
+        prompt="Identify trends in this data"
+    )
+    
+    # Enrich dataflow with AI insights
+    enriched = await llm.enrich_dataflow({
+        "id": "flow1",
+        "type": "ml_training",
+        "status": "complete",
+        "data": {...}
+    })
+    print(enriched["ai_insights"])
 ```
 
 ## API Gateway Endpoints
@@ -236,6 +293,13 @@ export JUPYTERBOOK_ENABLED=true
 # Event Bus
 export EVENT_BUS_ENABLED=true
 export EVENT_BUS_BACKEND=memory
+
+# CxSpaceLLM - GitHub Space AI Model
+export CXSPACELLM_ENABLED=true
+export CXSPACELLM_MODEL=CxSpaceLLM
+export CXSPACELLM_BASE_URL=https://models.inference.ai.azure.com
+export CXSPACELLM_TOKEN=your_token_here
+export CXSPACELLM_TIMEOUT_SECONDS=60
 ```
 
 ## Testing
