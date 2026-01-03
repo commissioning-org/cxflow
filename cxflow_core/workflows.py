@@ -2,6 +2,8 @@
 Workflow integrations - Connect workflows with all services.
 """
 
+from __future__ import annotations
+
 import asyncio
 import logging
 from typing import Any
@@ -31,7 +33,7 @@ class WorkflowOrchestrator:
     - Model results -> Dashboard creation
     """
     
-    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: "CXFlowConfig | None" = None):
+    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: CXFlowConfig | None = None):
         self.registry = registry
         self.event_bus = event_bus
         self.config = config
@@ -287,6 +289,6 @@ class WorkflowOrchestrator:
         return await self.cxspacellm.analyze_data(dataflow_data, custom_prompt)
 
 
-def create_orchestrator(registry: ServiceRegistry, event_bus: EventBus, config: "CXFlowConfig | None" = None) -> WorkflowOrchestrator:
+def create_orchestrator(registry: ServiceRegistry, event_bus: EventBus, config: CXFlowConfig | None = None) -> WorkflowOrchestrator:
     """Create a workflow orchestrator with CxSpaceLLM support."""
     return WorkflowOrchestrator(registry, event_bus, config)

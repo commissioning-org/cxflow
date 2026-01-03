@@ -1,5 +1,7 @@
 """Integration connectors for all CXFlow services."""
 
+from __future__ import annotations
+
 import json
 import logging
 from abc import ABC, abstractmethod
@@ -226,7 +228,7 @@ class CxSpaceLLMConnector(ServiceConnector):
     MAX_DATA_LENGTH = 1000
     TRUNCATION_SUFFIX_LENGTH = 3
     
-    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: "CXFlowConfig | None" = None):
+    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: CXFlowConfig | None = None):
         super().__init__("cxspacellm", registry, event_bus)
         self.config = config
         
