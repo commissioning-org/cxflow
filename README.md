@@ -357,6 +357,8 @@ If you keep the `scheduler` service running, the installer also appends schedule
 
 This repository includes a **comprehensive GitHub Copilot workspace solution** with all cookbook capabilities, providing a fully-configured AI-assisted development environment.
 
+📖 **[Complete Workspace Index](docs/COPILOT_WORKSPACE_INDEX.md)** - Master guide to all features
+
 ### 🎯 Complete Workspace Features
 
 #### 1. **Custom Instructions** - Context-aware AI assistance
@@ -438,11 +440,12 @@ Optimize this database query
 
 ### 📚 Documentation
 
-- **[Workspace Guide](docs/COPILOT_WORKSPACE.md)** - Complete workspace features and usage
-- **[Cookbook Examples](docs/COPILOT_COOKBOOK_EXAMPLES.md)** - 100+ practical prompts
-- **[Instructions Guide](docs/COPILOT_INSTRUCTIONS.md)** - How custom instructions work
-- **[Testing Guide](docs/TESTING_COPILOT_INSTRUCTIONS.md)** - Validate Copilot setup
-- **[Quick Start](COPILOT_QUICKSTART.md)** - Get started in 5 minutes
+- **[📋 Workspace Index](docs/COPILOT_WORKSPACE_INDEX.md)** - Complete feature index
+- **[🏠 Workspace Guide](docs/COPILOT_WORKSPACE.md)** - Complete workspace features
+- **[📖 Cookbook Examples](docs/COPILOT_COOKBOOK_EXAMPLES.md)** - 100+ practical prompts
+- **[📘 Instructions Guide](docs/COPILOT_INSTRUCTIONS.md)** - How custom instructions work
+- **[🧪 Testing Guide](docs/TESTING_COPILOT_WORKSPACE.md)** - Validate Copilot setup
+- **[⚡ Quick Start](COPILOT_QUICKSTART.md)** - Get started in 5 minutes
 
 ### ✨ What Makes This Special
 
