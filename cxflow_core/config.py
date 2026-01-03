@@ -89,6 +89,23 @@ class CXFlowConfig:
         default_factory=lambda: os.getenv("GATEWAY_ENABLED", "true").lower() == "true"
     )
     
+    # CxSpaceLLM Configuration
+    cxspacellm_enabled: bool = field(
+        default_factory=lambda: os.getenv("CXSPACELLM_ENABLED", "true").lower() == "true"
+    )
+    cxspacellm_model: str = field(
+        default_factory=lambda: os.getenv("CXSPACELLM_MODEL", "CxSpaceLLM")
+    )
+    cxspacellm_base_url: str = field(
+        default_factory=lambda: os.getenv("CXSPACELLM_BASE_URL", "https://models.inference.ai.azure.com")
+    )
+    cxspacellm_token: str = field(
+        default_factory=lambda: os.getenv("CXSPACELLM_TOKEN", "")
+    )
+    cxspacellm_timeout: int = field(
+        default_factory=lambda: int(os.getenv("CXSPACELLM_TIMEOUT_SECONDS", "60"))
+    )
+    
     def get_service_url(self, service_name: str) -> str:
         """Get the full URL for a service."""
         service = getattr(self, f"{service_name}_service", None)

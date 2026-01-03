@@ -9,6 +9,7 @@ Central integration hub that wires together all CXFlow components:
 - JupyterBook (documentation generation, cross-references)
 - Superset (BI dashboards, data visualization)
 - Workflows (enhanced automation, macros)
+- CxSpaceLLM (GitHub Space AI model integration for dataflow enrichment)
 """
 
 __version__ = "2.0.0"
@@ -24,6 +25,7 @@ from .connectors import (
     ResearchAgentConnector,
     JupyterBookConnector,
     SupersetConnector,
+    CxSpaceLLMConnector,
 )
 from .workflows import WorkflowOrchestrator, create_orchestrator
 
@@ -50,6 +52,7 @@ __all__ = [
     "ResearchAgentConnector",
     "JupyterBookConnector",
     "SupersetConnector",
+    "CxSpaceLLMConnector",
     # Workflows
     "WorkflowOrchestrator",
     "create_orchestrator",

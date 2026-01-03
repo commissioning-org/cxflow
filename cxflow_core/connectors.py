@@ -1,5 +1,8 @@
 """Integration connectors for all CXFlow services."""
 
+from __future__ import annotations
+
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -216,3 +219,188 @@ class SupersetConnector(ServiceConnector):
         ))
         
         return await self.call("api/v1/dashboard", method="POST", json=config)
+
+
+class CxSpaceLLMConnector(ServiceConnector):
+    """Connector for CxSpaceLLM - GitHub Space Model."""
+    
+    # Constants for data truncation
+    MAX_DATA_LENGTH = 1000
+    TRUNCATION_SUFFIX_LENGTH = 3
+    
+    def __init__(self, registry: ServiceRegistry, event_bus: EventBus, config: CXFlowConfig | None = None):
+        super().__init__("cxspacellm", registry, event_bus)
+        self.config = config
+        
+        # Get configuration from config object or environment
+        if config:
+            self.base_url = config.cxspacellm_base_url
+            self.token = config.cxspacellm_token
+            self.model = config.cxspacellm_model
+            self.timeout = config.cxspacellm_timeout
+            self.enabled = config.cxspacellm_enabled
+        else:
+            import os
+            self.base_url = os.getenv("CXSPACELLM_BASE_URL", "https://models.inference.ai.azure.com")
+            self.token = os.getenv("CXSPACELLM_TOKEN", "")
+            self.model = os.getenv("CXSPACELLM_MODEL", "CxSpaceLLM")
+            self.timeout = int(os.getenv("CXSPACELLM_TIMEOUT_SECONDS", "60"))
+            self.enabled = os.getenv("CXSPACELLM_ENABLED", "true").lower() == "true"
+    
+    async def call(self, endpoint: str, method: str = "GET", **kwargs) -> Any:
+        """Call CxSpaceLLM endpoint."""
+        if not self.enabled:
+            raise RuntimeError("CxSpaceLLM is not enabled")
+        
+        if not self.token:
+            raise RuntimeError("CxSpaceLLM token not configured")
+        
+        full_url = f"{self.base_url.rstrip('/')}/{endpoint.lstrip('/')}"
+        
+        headers = kwargs.pop("headers", {})
+        headers["Authorization"] = f"Bearer {self.token}"
+        headers["Content-Type"] = "application/json"
+        
+        async with httpx.AsyncClient(timeout=float(self.timeout)) as client:
+            response = await client.request(method, full_url, headers=headers, **kwargs)
+            response.raise_for_status()
+            return response.json()
+    
+    @staticmethod
+    def _extract_content_from_response(response: dict[str, Any]) -> str:
+        """
+        Safely extract content from API response.
+        
+        Args:
+            response: API response dictionary
+            
+        Returns:
+            Content string, or empty string if not found
+        """
+        choices = response.get("choices", [])
+        if choices and len(choices) > 0:
+            return choices[0].get("message", {}).get("content", "")
+        return ""
+    
+    async def chat_completion(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        stream: bool = False
+    ) -> dict[str, Any]:
+        """
+        Generate chat completion using CxSpaceLLM.
+        
+        Args:
+            messages: List of message dicts with 'role' and 'content'
+            temperature: Sampling temperature (0.0 to 2.0)
+            max_tokens: Maximum tokens to generate
+            stream: Whether to stream the response
+            
+        Returns:
+            Chat completion response
+        """
+        await self.event_bus.publish(Event(
+            type="cxspacellm.chat.start",
+            source="cxspacellm_connector",
+            payload={"messages": len(messages), "model": self.model}
+        ))
+        
+        payload = {
+            "model": self.model,
+            "messages": messages,
+            "temperature": temperature,
+            "stream": stream
+        }
+        
+        if max_tokens:
+            payload["max_tokens"] = max_tokens
+        
+        result = await self.call("chat/completions", method="POST", json=payload)
+        
+        await self.event_bus.publish(Event(
+            type="cxspacellm.chat.complete",
+            source="cxspacellm_connector",
+            payload={"model": self.model, "usage": result.get("usage", {})}
+        ))
+        
+        return result
+    
+    async def analyze_data(self, data: dict[str, Any], prompt: str | None = None) -> dict[str, Any]:
+        """
+        Analyze data using CxSpaceLLM.
+        
+        Args:
+            data: Data to analyze
+            prompt: Optional custom prompt for analysis
+            
+        Returns:
+            Analysis results
+        """
+        default_prompt = f"Analyze the following data and provide insights:\n\n{json.dumps(data, indent=2)}"
+        messages = [
+            {"role": "system", "content": "You are a helpful data analysis assistant."},
+            {"role": "user", "content": prompt or default_prompt}
+        ]
+        
+        return await self.chat_completion(messages)
+    
+    async def enrich_dataflow(self, dataflow_data: dict[str, Any]) -> dict[str, Any]:
+        """
+        Enrich dataflow with AI-generated insights from CxSpaceLLM.
+        
+        Args:
+            dataflow_data: Dataflow data to enrich
+            
+        Returns:
+            Enriched dataflow data with AI insights
+        """
+        await self.event_bus.publish(Event(
+            type="cxspacellm.enrich.start",
+            source="cxspacellm_connector",
+            payload={"dataflow_id": dataflow_data.get("id")}
+        ))
+        
+        # Extract key information for analysis
+        # Safely truncate JSON data while preserving structure
+        data_str = json.dumps(dataflow_data.get('data', {}), indent=2)
+        if len(data_str) > self.MAX_DATA_LENGTH:
+            data_str = data_str[:self.MAX_DATA_LENGTH - self.TRUNCATION_SUFFIX_LENGTH] + "..."
+        
+        prompt = f"""Analyze this dataflow and provide insights:
+        
+Dataflow Type: {dataflow_data.get('type', 'unknown')}
+Status: {dataflow_data.get('status', 'unknown')}
+Data: {data_str}
+
+Provide:
+1. Summary of the dataflow
+2. Key insights from the data
+3. Potential issues or recommendations
+4. Suggested next actions
+"""
+        
+        messages = [
+            {"role": "system", "content": "You are an expert data engineer analyzing dataflows."},
+            {"role": "user", "content": prompt}
+        ]
+        
+        response = await self.chat_completion(messages, temperature=0.3)
+        
+        # Extract AI insights from response using helper method
+        insights = self._extract_content_from_response(response)
+        
+        # Enrich the dataflow data
+        enriched_data = dataflow_data.copy()
+        enriched_data["ai_insights"] = insights
+        enriched_data["enriched_by"] = "CxSpaceLLM"
+        enriched_data["enriched_at"] = response.get("created")
+        
+        await self.event_bus.publish(Event(
+            type="cxspacellm.enrich.complete",
+            source="cxspacellm_connector",
+            payload={"dataflow_id": dataflow_data.get("id")}
+        ))
+        
+        return enriched_data

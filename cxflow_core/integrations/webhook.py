@@ -56,6 +56,10 @@ class WebhookEngineIntegration:
         
         # Research events
         self.event_bus.subscribe("research.analyze.complete", self._on_research_complete)
+        
+        # CxSpaceLLM events
+        self.event_bus.subscribe("cxspacellm.chat.complete", self._on_cxspacellm_event)
+        self.event_bus.subscribe("cxspacellm.enrich.complete", self._on_cxspacellm_event)
     
     async def _on_ml_train_complete(self, event) -> None:
         """Handle ML training completion."""
@@ -180,6 +184,27 @@ class WebhookEngineIntegration:
                 
                 await self.engine.send(endpoint, payload)
                 logger.info(f"Sent research webhook to {endpoint}")
+            
+            except Exception as e:
+                logger.error(f"Failed to send webhook to {endpoint}: {e}")
+    
+    async def _on_cxspacellm_event(self, event) -> None:
+        """Handle CxSpaceLLM events."""
+        logger.info(f"CxSpaceLLM event: {event.type}")
+        
+        endpoints = self._get_endpoints_for_event("cxspacellm")
+        
+        for endpoint in endpoints:
+            try:
+                payload = {
+                    "event_type": event.type,
+                    "event_id": event.id,
+                    "timestamp": event.timestamp.isoformat(),
+                    "data": event.payload,
+                }
+                
+                await self.engine.send(endpoint, payload)
+                logger.info(f"Sent CxSpaceLLM webhook to {endpoint}")
             
             except Exception as e:
                 logger.error(f"Failed to send webhook to {endpoint}: {e}")
