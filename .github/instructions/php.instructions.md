@@ -246,9 +246,7 @@ class ProcessCommand extends Command
     /**
      * The name and signature of the console command.
      */
-    protected $signature = 'process:data 
-                            {source : The data source}
-                            {--async : Run asynchronously}';
+    protected $signature = 'process:data {source : The data source} {--async : Run asynchronously}';
 
     /**
      * The console command description.

@@ -21,8 +21,10 @@ applyTo: "**/*.py"
 Always use type hints with modern Python syntax:
 
 ```python
+from typing import Any
+
 # Good
-def process_data(items: list[dict], threshold: float = 0.5) -> dict[str, any]:
+def process_data(items: list[dict], threshold: float = 0.5) -> dict[str, Any]:
     pass
 
 # Not this
@@ -215,6 +217,8 @@ config_file = os.path.join("config", "settings.json")
 ### ML Service Pattern
 
 ```python
+from pathlib import Path
+from datetime import datetime
 from sklearn.ensemble import RandomForestClassifier
 import joblib
 
@@ -223,7 +227,9 @@ def train_model(X, y):
     model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X, y)
     
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     model_path = Path("models") / f"model_{timestamp}.joblib"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_path)
     
     return {"model_id": model_path.stem, "path": str(model_path)}
