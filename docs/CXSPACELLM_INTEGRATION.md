@@ -1,4 +1,4 @@
-# CxSpaceLLM Integration - Complete
+# CxSpaceLLM Integration Guide
 
 This document describes the CxSpaceLLM integration into all CXFlow dataflows.
 

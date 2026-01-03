@@ -51,8 +51,13 @@ async def example_direct_llm_usage():
             max_tokens=500
         )
         
-        content = response.get("choices", [{}])[0].get("message", {}).get("content", "")
-        print(f"Response: {content[:200]}...")
+        # Safely extract content
+        choices = response.get("choices", [])
+        content = ""
+        if choices and len(choices) > 0:
+            content = choices[0].get("message", {}).get("content", "")
+        
+        print(f"Response: {content[:200] if content else '(no content)'}...")
         print(f"Usage: {response.get('usage', {})}")
     except Exception as e:
         print(f"Error: {e}")
@@ -72,8 +77,13 @@ async def example_direct_llm_usage():
             prompt="Analyze this ML model performance and suggest improvements"
         )
         
-        content = analysis.get("choices", [{}])[0].get("message", {}).get("content", "")
-        print(f"Analysis: {content[:200]}...")
+        # Safely extract content
+        choices = analysis.get("choices", [])
+        content = ""
+        if choices and len(choices) > 0:
+            content = choices[0].get("message", {}).get("content", "")
+        
+        print(f"Analysis: {content[:200] if content else '(no content)'}...")
     except Exception as e:
         print(f"Error: {e}")
     
@@ -160,8 +170,13 @@ async def example_workflow_integration():
             custom_prompt="Analyze these performance metrics over time and identify trends"
         )
         
-        content = analysis.get("choices", [{}])[0].get("message", {}).get("content", "")
-        print(f"Analysis: {content[:200]}...")
+        # Safely extract content
+        choices = analysis.get("choices", [])
+        content = ""
+        if choices and len(choices) > 0:
+            content = choices[0].get("message", {}).get("content", "")
+        
+        print(f"Analysis: {content[:200] if content else '(no content)'}...")
     except Exception as e:
         print(f"Error: {e}")
 

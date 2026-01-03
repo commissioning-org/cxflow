@@ -341,11 +341,16 @@ class CxSpaceLLMConnector(ServiceConnector):
         ))
         
         # Extract key information for analysis
+        # Safely truncate JSON data while preserving structure
+        data_str = json.dumps(dataflow_data.get('data', {}), indent=2)
+        if len(data_str) > 1000:
+            data_str = data_str[:997] + "..."
+        
         prompt = f"""Analyze this dataflow and provide insights:
         
 Dataflow Type: {dataflow_data.get('type', 'unknown')}
 Status: {dataflow_data.get('status', 'unknown')}
-Data: {json.dumps(dataflow_data.get('data', {}), indent=2)[:1000]}
+Data: {data_str}
 
 Provide:
 1. Summary of the dataflow
@@ -361,8 +366,11 @@ Provide:
         
         response = await self.chat_completion(messages, temperature=0.3)
         
-        # Extract AI insights from response
-        insights = response.get("choices", [{}])[0].get("message", {}).get("content", "")
+        # Extract AI insights from response - safely handle empty choices
+        choices = response.get("choices", [])
+        insights = ""
+        if choices and len(choices) > 0:
+            insights = choices[0].get("message", {}).get("content", "")
         
         # Enrich the dataflow data
         enriched_data = dataflow_data.copy()
