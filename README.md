@@ -353,6 +353,43 @@ Run manually:
 
 If you keep the `scheduler` service running, the installer also appends schedule hooks to `routes/console.php`.
 
+## GitHub Copilot Integration
+
+This repository includes **custom instructions for GitHub Copilot** following the [GitHub Copilot Chat Cookbook](https://docs.github.com/copilot/tutorials/copilot-chat-cookbook) best practices.
+
+### What This Means for You
+
+When you use GitHub Copilot in this repository, it automatically has context about:
+
+- **Project Architecture** - All components (Laravel, Python microservices, Docker)
+- **Coding Standards** - PSR-12 for PHP, PEP 8 for Python, TypeScript patterns
+- **Common Patterns** - Service patterns, database connections, API structures
+- **Build & Test Commands** - How to lint, build, and test the code
+- **Development Workflow** - Starting services, debugging, troubleshooting
+
+### Custom Instruction Files
+
+- `.github/copilot-instructions.md` - Repository-wide context and guidelines
+- `.github/instructions/python.instructions.md` - Python/FastAPI patterns
+- `.github/instructions/php.instructions.md` - PHP/Laravel conventions
+- `.github/instructions/javascript.instructions.md` - TypeScript/React patterns
+- `.github/instructions/docker.instructions.md` - Docker & infrastructure
+
+### Try It Out
+
+Ask GitHub Copilot Chat questions like:
+
+```
+How do I add a new FastAPI endpoint?
+What's the pattern for creating a Laravel service?
+How do I connect to the database in Docker?
+How do I use the Event Bus in CXFlow Core?
+```
+
+Copilot will provide context-aware answers based on actual patterns from this codebase.
+
+**Full Documentation**: [`docs/COPILOT_INSTRUCTIONS.md`](docs/COPILOT_INSTRUCTIONS.md)
+
 ## Notes
 
 - This is intended for **local development**.
