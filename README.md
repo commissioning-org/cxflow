@@ -2,7 +2,36 @@
 
 This repository scaffolds a **Linux/Apache/MySQL/PHP** environment tailored for the **Laravel** framework.
 
-## 🚀 New: Significantly Enhanced Full Automation Capabilities
+## 🚀 New: Unified Integration Layer (CXFlow Core)
+
+**CXFlow Core** provides a complete integration framework that wires together all services:
+
+- **API Gateway** (`:8100`) - Single entry point for all services
+- **Service Registry** - Dynamic service discovery with health tracking
+- **Event Bus** - Pub/sub messaging between components
+- **Workflow Orchestrator** - Cross-service automation
+- **Service Connectors** - Type-safe clients for ML, Webhooks, Research, JupyterBook, Superset
+
+### Quick Start with Integrated System
+
+```bash
+# Start all services
+docker-compose up -d
+
+# Start the API Gateway (unified access point)
+python cxflow.py gateway
+
+# Check system health
+curl http://localhost:8100/system/health
+
+# Access services via gateway
+curl http://localhost:8100/ml/health
+curl http://localhost:8100/system/services
+```
+
+**Full Documentation**: [`cxflow_core/README.md`](cxflow_core/README.md)
+
+## 🚀 Significantly Enhanced Full Automation Capabilities
 
 The CXFlow system now includes **significantly enhanced automation for ingestion, pipelines, dataflows, routing, and distribution with full no human intervention**:
 
