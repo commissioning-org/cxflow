@@ -609,3 +609,66 @@ try {
 8. ✅ Cache expensive operations
 9. ✅ Use queues for long-running tasks
 10. ✅ Keep controllers thin, services fat
+
+## Quick Reference: Common Cookbook Patterns
+
+### Create Laravel Service
+**Prompt:**
+```
+Create a Laravel service class DataService that:
+- Uses constructor injection with readonly properties
+- Processes data with transactions
+- Includes error handling and logging
+- Follows PSR-12
+```
+
+### Create Queue Job
+**Prompt:**
+```
+Create a queue job ProcessDataJob that:
+- Accepts array of data
+- Has retry logic (3 attempts)
+- Uses dependency injection
+- Logs progress
+```
+
+### Create Migration
+**Prompt:**
+```
+Create a migration for table 'analytics':
+- id, name, data (json), status (enum), timestamps
+- Add indexes for name and status
+- Follow Laravel conventions
+```
+
+### Write Tests
+**Prompt:**
+```
+Write PHPUnit tests for this service:
+- Test successful execution
+- Test validation failures
+- Test transactions
+- Mock dependencies
+```
+
+### Database Query
+**Prompt:**
+```
+Optimize this database query:
+- Use eager loading to avoid N+1
+- Add indexes where needed
+- Use chunks for large datasets
+```
+
+### API Resource
+**Prompt:**
+```
+Create a REST API for managing [resource]:
+- Controller with CRUD operations
+- Form Request validation
+- API Resource for responses
+- Include pagination
+```
+
+For more prompts, see: [docs/COPILOT_COOKBOOK_EXAMPLES.md](../../docs/COPILOT_COOKBOOK_EXAMPLES.md)
+

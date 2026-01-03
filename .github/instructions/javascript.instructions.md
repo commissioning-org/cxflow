@@ -402,27 +402,59 @@ export function groupBy<T>(
 9. ✅ Avoid deep nesting - use early returns
 10. ✅ Document complex logic with comments
 
-## Build & Development
+## Quick Reference: Common Cookbook Patterns
 
-```bash
-# Install dependencies
-npm install
-
-# Development server
-npm run dev
-
-# Build for production
-npm run build
-
-# Run tests
-npm run test
-
-# Lint
-npm run lint
-
-# Type check
-npm run type-check
+### Create API Client
+**Prompt:**
 ```
+Create a type-safe API client for Laravel backend:
+- Use fetch with proper types
+- Handle CSRF token
+- Include error handling
+- Return typed responses
+```
+
+### React Component
+**Prompt:**
+```
+Create a React component for displaying data:
+- Use TypeScript with proper types
+- Fetch data with useEffect
+- Handle loading and error states
+- Include proper error boundaries
+```
+
+### Form Validation
+**Prompt:**
+```
+Create a form with validation:
+- Use controlled components
+- Validate on submit
+- Display error messages
+- Handle async submission
+```
+
+### API Integration
+**Prompt:**
+```
+Integrate with backend API:
+- Type-safe requests/responses
+- Handle authentication
+- Retry on failure
+- Loading states
+```
+
+### Write Tests
+**Prompt:**
+```
+Write tests for this component:
+- Test rendering
+- Test user interactions
+- Mock API calls
+- Test error states
+```
+
+For more prompts, see: [docs/COPILOT_COOKBOOK_EXAMPLES.md](../../docs/COPILOT_COOKBOOK_EXAMPLES.md)
 
 ## Integration with Backend
 
@@ -445,3 +477,4 @@ async function laravelRequest(endpoint: string, data: unknown) {
   });
 }
 ```
+

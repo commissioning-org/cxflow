@@ -397,3 +397,55 @@ result = await orchestrator.run_ml_workflow(
 if "ai_insights" in result:
     logger.info(f"AI insights: {result['ai_insights']}")
 ```
+
+## Quick Reference: Common Cookbook Patterns
+
+### Create FastAPI Endpoint
+**Prompt:**
+```
+Create a FastAPI POST endpoint at /api/process that:
+- Accepts JSON with 'data' field (list of dicts)
+- Validates with Pydantic
+- Returns processed results
+- Uses async/await with type hints
+```
+
+### Write Pytest Tests
+**Prompt:**
+```
+Write pytest tests for this async function:
+- Test happy path
+- Test error cases
+- Use pytest.mark.asyncio
+- Mock external dependencies
+```
+
+### Use Event Bus
+**Prompt:**
+```
+Publish an event to CXFlow Event Bus when processing completes:
+- Event type: "data.processed"
+- Include metadata
+- Handle publishing errors
+```
+
+### Service Registry
+**Prompt:**
+```
+Register and discover a service:
+- Register with health check
+- Find healthy service
+- Handle unavailability
+```
+
+### Debug Performance
+**Prompt:**
+```
+Optimize this code for performance:
+- Identify bottlenecks
+- Suggest async improvements
+- Add profiling
+```
+
+For more prompts, see: [docs/COPILOT_COOKBOOK_EXAMPLES.md](../../docs/COPILOT_COOKBOOK_EXAMPLES.md)
+
