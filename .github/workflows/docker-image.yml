@@ -34,7 +34,7 @@ jobs:
             file: ./ml/Dockerfile
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload build artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: docker-${{ matrix.name }}-image
           path: artifacts/${{ matrix.name }}-image.txt
